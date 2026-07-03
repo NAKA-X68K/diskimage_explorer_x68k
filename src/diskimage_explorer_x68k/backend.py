@@ -258,34 +258,57 @@ def detect_x68k_floppy_candidate(image_path: Path) -> MountCandidate | None:
     with image_path.open("rb") as fp:
         head = fp.read(512)
 
+    # Check for X68000 IPL boot sector signature ("X68IPL30")
+    # The X68000 68000 machine code and IPL signature are at the start:
+    # 60 3c 90 | 58 36 38 49 50 4c 33 30  (IPL code | "X68IPL30")
+    has_x68k_ipl = len(head) >= 11 and head[3:11] == b"X68IPL30"
+
     bpb = _x68k_bpb_at(head, 0)
     if bpb is None:
+        # If BPB parsing failed but we have X68000 IPL signature, try to match by file size
+        if not has_x68k_ipl:
+            return None
+        # Fall through to file-size matching below
+    else:
+        # Standard BPB parsing succeeded, match profile
+        for profile in X68K_XDF_PROFILES:
+            if file_size != profile.file_size:
+                continue
+            if bpb["bytes_per_sector"] != profile.bytes_per_sector:
+                continue
+            if bpb["sectors_per_cluster"] != profile.sectors_per_cluster:
+                continue
+            if bpb["fat_count"] != profile.fat_count:
+                continue
+            if bpb["reserved_sectors"] != profile.reserved_sectors:
+                continue
+            if bpb["root_entries"] != profile.root_entries:
+                continue
+            if bpb["total_sectors"] != profile.total_sectors:
+                continue
+            if bpb["media"] != profile.media:
+                continue
+            if bpb["fat_sectors"] != profile.fat_sectors:
+                continue
+            return MountCandidate(
+                kind="x68k-be-bpb",
+                offset=0,
+                label=f"X68K floppy {profile.name} @ 0x00000000",
+            )
         return None
 
-    for profile in X68K_XDF_PROFILES:
-        if file_size != profile.file_size:
-            continue
-        if bpb["bytes_per_sector"] != profile.bytes_per_sector:
-            continue
-        if bpb["sectors_per_cluster"] != profile.sectors_per_cluster:
-            continue
-        if bpb["fat_count"] != profile.fat_count:
-            continue
-        if bpb["reserved_sectors"] != profile.reserved_sectors:
-            continue
-        if bpb["root_entries"] != profile.root_entries:
-            continue
-        if bpb["total_sectors"] != profile.total_sectors:
-            continue
-        if bpb["media"] != profile.media:
-            continue
-        if bpb["fat_sectors"] != profile.fat_sectors:
-            continue
-        return MountCandidate(
-            kind="x68k-be-bpb",
-            offset=0,
-            label=f"X68K floppy {profile.name} @ 0x00000000",
-        )
+    # If we reach here, either BPB parsing failed but X68000 IPL signature is present,
+    # or we need to match by file size alone. This handles non-standard BPB layouts.
+    if has_x68k_ipl:
+        for profile in X68K_XDF_PROFILES:
+            if file_size != profile.file_size:
+                continue
+            # Found a profile matching this file size and X68000 IPL signature
+            return MountCandidate(
+                kind="x68k-be-bpb",
+                offset=0,
+                label=f"X68K floppy {profile.name} @ 0x00000000 (IPL)",
+            )
 
     return None
 
@@ -403,8 +426,34 @@ class X68kFatAdapter(io.RawIOBase):
             raw = raw + bytes(512 - len(raw))
         self._raw_first = bytearray(raw)
         self._raw_media_original = self._raw_first[0x1C]
+        
+        # Check if this is an X68000 IPL boot sector (non-standard BPB layout)
+        is_x68k_ipl = len(raw) >= 11 and raw[3:11] == b"X68IPL30"
+        
+        if is_x68k_ipl:
+            # For X68000 IPL XDF files, derive BPB from file size and known profiles
+            profile = self._detect_profile_from_file_size()
+            if profile:
+                # Build a raw boot sector from the profile
+                self._raw_first = bytearray(_build_x68k_raw_boot_sector(profile))
+                self._raw_media_original = profile.media
+            # else: fall back to reading BPB at standard offsets
+        
         self._synth_first = bytearray(_build_x68k_synthetic_boot_sector(self._raw_first))
         self._fat_media_byte_offsets = self._build_fat_media_byte_offsets()
+
+    def _detect_profile_from_file_size(self) -> X68kFloppyProfile | None:
+        """Detect X68000 XDF profile by file size."""
+        try:
+            self._fp.seek(0, io.SEEK_END)
+            file_size = self._fp.tell() - self._base
+            
+            for profile in X68K_XDF_PROFILES:
+                if file_size == profile.file_size:
+                    return profile
+        except Exception:
+            pass
+        return None
 
     def _build_fat_media_byte_offsets(self) -> list[int]:
         bps = int.from_bytes(self._raw_first[0x12:0x14], "big")
@@ -632,10 +681,14 @@ class FatImageBackend:
         for off in fat_offsets:
             fat_candidates.append(MountCandidate(kind="fat", offset=off, label=f"FAT @ 0x{off:08X}"))
 
-        # Prefer native X68000 mappings for hard disk images.
+        # Prefer native X68000 mappings for hard disk images and floppy images.
         suffix = image_path.suffix.lower()
         if suffix in (".hds", ".hdf") and x68k_candidates:
             self.mount_candidates.extend(x68k_candidates)
+            self.mount_candidates.extend(fat_candidates)
+        elif suffix in (".xdf", ".2hd", ".2dd"):
+            if floppy_candidate is not None:
+                self.mount_candidates.append(floppy_candidate)
             self.mount_candidates.extend(fat_candidates)
         else:
             if floppy_candidate is not None:

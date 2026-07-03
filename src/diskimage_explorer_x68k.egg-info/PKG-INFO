@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: diskimage_explorer_x68k
+Version: 0.1.0
+Summary: GUI editor for X68000 HDF/HDS/XDF disk images
+Requires-Python: >=3.10
+Requires-Dist: PySide6>=6.7
+Requires-Dist: pyfatfs>=1.1.0
+Requires-Dist: charset-normalizer>=3.3
+Requires-Dist: setuptools<81

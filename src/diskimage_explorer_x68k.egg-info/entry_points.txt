@@ -1,0 +1,2 @@
+[console_scripts]
+diskimage_explorer_x68k = diskimage_explorer_x68k.main:run

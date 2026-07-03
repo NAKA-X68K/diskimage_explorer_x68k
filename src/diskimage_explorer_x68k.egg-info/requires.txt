@@ -1,0 +1,4 @@
+PySide6>=6.7
+pyfatfs>=1.1.0
+charset-normalizer>=3.3
+setuptools<81
