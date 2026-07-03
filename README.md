@@ -80,6 +80,23 @@ Windows (PowerShell):
 .\scripts\build-windows.ps1
 ```
 
+### Windows 実行前に必要なもの
+
+- Microsoft Visual C++ 再頒布可能パッケージ (x64, 2015-2022)
+	- `winget install Microsoft.VCRedist.2015+.x64`
+	- もしくは Microsoft 公式ページから `vc_redist.x64.exe` をインストール
+- 実行は `build\` ではなく `dist\diskimage_explorer_x68k\diskimage_explorer_x68k.exe` を使う
+- `diskimage_explorer_x68k.exe` 単体では起動できません。`_internal\` を含むフォルダ一式が必要です
+
+### Windows トラブルシュート
+
+`Failed to load Python DLL ... _internal\\python3xx.dll` が出る場合:
+
+1. `build\...` 側の EXE を実行していないか確認する
+2. `dist\diskimage_explorer_x68k\` フォルダを丸ごと保持して実行する（EXE だけコピーしない）
+3. Visual C++ 再頒布可能パッケージ (x64) をインストールする
+4. もう一度 `.\scripts\build-windows.ps1` を実行して作り直す
+
 Windows インストーラ (Inno Setup):
 
 ```powershell
@@ -100,12 +117,30 @@ Windows MSI (WiX v4):
 .\scripts\build-windows-msi.ps1
 ```
 
+Windows 側の初回セットアップ（推奨）:
+
+```powershell
+.\scripts\setup-windows-msi-tools.ps1
+```
+
+- `winget` で .NET SDK 8 を導入し、`dotnet tool` で WiX v4 (`wix`) を導入します。
+- すでに導入済みの場合は更新のみ行います。
+
 - 既定では PyInstaller ビルド後に MSI を生成します。
 - すでに `dist/diskimage_explorer_x68k/` がある場合は次でビルド工程を省略できます。
 
 ```powershell
 .\scripts\build-windows-msi.ps1 -SkipBuild
 ```
+
+Windows での最短手順:
+
+1. PowerShell を開く
+2. `cd <repo>`
+3. `.\scripts\setup-windows-msi-tools.ps1`
+4. `.\scripts\build-windows.ps1`
+5. `.\scripts\build-windows-msi.ps1 -SkipBuild`
+6. `dist\diskimage_explorer_x68k-windows-<version>.msi` を配布
 
 注意:
 

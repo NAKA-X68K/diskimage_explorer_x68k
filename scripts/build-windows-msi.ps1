@@ -4,6 +4,10 @@ param(
   [switch]$SkipBuild
 )
 
+if ([System.Environment]::OSVersion.Platform -ne "Win32NT") {
+  throw "This script must be run on Windows."
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
 Set-Location $ProjectRoot
@@ -18,6 +22,7 @@ if (Test-Path $PyProjectPath) {
 }
 
 if (-not $SkipBuild) {
+  Write-Host "==> Building Windows app bundle with PyInstaller"
   & "$ScriptDir\build-windows.ps1"
 }
 
@@ -56,6 +61,7 @@ if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $ToolsDir })) {
   $env:PATH = "$ToolsDir;$env:PATH"
 }
 
+Write-Host "==> Ensuring WiX v4 tool"
 & $DotnetPath tool update --global wix --version "4.*"
 
 $WixExe = Join-Path $ToolsDir "wix.exe"
@@ -79,9 +85,11 @@ New-Item -Path $ObjDir -ItemType Directory -Force | Out-Null
 $HarvestWxs = Join-Path $ObjDir "AppFiles.wxs"
 
 & $WixExe extension add WixToolset.Heat | Out-Null
+Write-Host "==> Harvesting dist files"
 & $WixExe heat dir "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
 
 $MsiOut = Join-Path $ProjectRoot "dist\diskimage_explorer_x68k-windows-$Version.msi"
+Write-Host "==> Building MSI"
 & $WixExe build -nologo -d "AppVersion=$Version" -d "SourceDir=$DistDir" "$ProductWxs" "$HarvestWxs" -o "$MsiOut"
 
 if (Test-Path $MsiOut) {
