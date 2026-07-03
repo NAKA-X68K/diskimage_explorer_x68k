@@ -117,10 +117,10 @@ function Write-WixAppFilesFragment {
   }
 
   $lines = New-Object System.Collections.Generic.List[string]
-  $lines.Add("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-  $lines.Add("<Wix xmlns=\"http://wixtoolset.org/schemas/v4/wxs\">")
-  $lines.Add("  <Fragment>")
-  $lines.Add("    <DirectoryRef Id=\"INSTALLFOLDER\">")
+  $lines.Add('<?xml version="1.0" encoding="UTF-8"?>')
+  $lines.Add('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">')
+  $lines.Add('  <Fragment>')
+  $lines.Add('    <DirectoryRef Id="INSTALLFOLDER">')
 
   function Render-Node {
     param(
@@ -135,38 +135,38 @@ function Write-WixAppFilesFragment {
       $componentId = Escape-XmlAttr $file.ComponentId
       $fileId = Escape-XmlAttr $file.FileId
       $source = Escape-XmlAttr $file.SourcePath
-      $lines.Add("${prefix}<Component Id=\"$componentId\" Guid=\"*\">")
-      $lines.Add("${prefix}  <File Id=\"$fileId\" Source=\"$source\" KeyPath=\"yes\" />")
-      $lines.Add("${prefix}</Component>")
+      $lines.Add(('{0}<Component Id="{1}" Guid="*">' -f $prefix, $componentId))
+      $lines.Add(('{0}  <File Id="{1}" Source="{2}" KeyPath="yes" />' -f $prefix, $fileId, $source))
+      $lines.Add(('{0}</Component>' -f $prefix))
     }
 
     foreach ($childKey in ($node.Children | Sort-Object { $nodes[$_].Name })) {
       $child = $nodes[$childKey]
       $childId = Escape-XmlAttr $child.DirId
       $childName = Escape-XmlAttr $child.Name
-      $lines.Add("${prefix}<Directory Id=\"$childId\" Name=\"$childName\">")
+      $lines.Add(('{0}<Directory Id="{1}" Name="{2}">' -f $prefix, $childId, $childName))
       Render-Node -DirKey $childKey -Indent ($Indent + 2)
-      $lines.Add("${prefix}</Directory>")
+      $lines.Add(('{0}</Directory>' -f $prefix))
     }
   }
 
   Render-Node -DirKey "" -Indent 6
 
-  $lines.Add("    </DirectoryRef>")
-  $lines.Add("  </Fragment>")
-  $lines.Add("  <Fragment>")
-  $lines.Add("    <ComponentGroup Id=\"AppFiles\">")
+  $lines.Add('    </DirectoryRef>')
+  $lines.Add('  </Fragment>')
+  $lines.Add('  <Fragment>')
+  $lines.Add('    <ComponentGroup Id="AppFiles">')
 
   foreach ($dirKey in ($nodes.Keys | Sort-Object)) {
     foreach ($file in ($nodes[$dirKey].Files | Sort-Object RelativePath)) {
       $componentId = Escape-XmlAttr $file.ComponentId
-      $lines.Add("      <ComponentRef Id=\"$componentId\" />")
+      $lines.Add(('      <ComponentRef Id="{0}" />' -f $componentId))
     }
   }
 
-  $lines.Add("    </ComponentGroup>")
-  $lines.Add("  </Fragment>")
-  $lines.Add("</Wix>")
+  $lines.Add('    </ComponentGroup>')
+  $lines.Add('  </Fragment>')
+  $lines.Add('</Wix>')
 
   [System.IO.File]::WriteAllLines($OutFile, $lines, [System.Text.UTF8Encoding]::new($false))
 }
