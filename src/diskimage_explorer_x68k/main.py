@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .backend import FatImageBackend, ImageMountError
+from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k
 
 
 def _join(base: str, name: str) -> str:
@@ -1043,7 +1043,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.backend.create_empty_file(_join(target_dir, name.strip()))
+            # X68000 filesystems require uppercase filenames
+            normalized_name = _normalize_path_for_x68k(name.strip())
+            self.backend.create_empty_file(_join(target_dir, normalized_name))
             self.refresh_tree()
             self.statusBar().showMessage("File created")
         except Exception as exc:
@@ -1059,7 +1061,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.backend.create_dir(_join(target_dir, name.strip()))
+            # X68000 filesystems require uppercase directory names
+            normalized_name = _normalize_path_for_x68k(name.strip())
+            self.backend.create_dir(_join(target_dir, normalized_name))
             self.refresh_tree()
             self.statusBar().showMessage("Folder created")
         except Exception as exc:

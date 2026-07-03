@@ -855,13 +855,17 @@ class FatImageBackend:
         target_dir = _clean_fs_path(dest_dir)
 
         if local_path.is_dir():
-            dst = _join_fs_path(target_dir, local_path.name)
+            # X68000 filesystems require uppercase directory names
+            normalized_name = _normalize_path_for_x68k(local_path.name)
+            dst = _join_fs_path(target_dir, normalized_name)
             fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
 
-        target_file = _join_fs_path(target_dir, local_path.name)
+        # X68000 filesystems require uppercase filenames
+        normalized_name = _normalize_path_for_x68k(local_path.name)
+        target_file = _join_fs_path(target_dir, normalized_name)
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
