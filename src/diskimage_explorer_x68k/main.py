@@ -8,13 +8,12 @@ import tempfile
 from typing import Any, Callable
 
 from PySide6.QtCore import QMimeData, QSettings, QThread, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDrag, QIntValidator, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QDrag, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QFileDialog,
     QHBoxLayout,
@@ -33,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .backend import FatImageBackend, ImageMountError, NEW_IMAGE_PROFILES
+from .backend import FatImageBackend, ImageMountError
 
 
 def _join(base: str, name: str) -> str:
@@ -110,63 +109,6 @@ class DropTreeWidget(QTreeWidget):
         if local_paths:
             self.localPathsDropped.emit(local_paths, target_path, target_is_dir)
             event.acceptProposedAction()
-
-
-class NewImageDialog(QDialog):
-    def __init__(self, parent: QWidget | None, image_kind: str, title: str, default_dir: str, default_name: str) -> None:
-        super().__init__(parent)
-        self._image_kind = image_kind
-        self.setWindowTitle(title)
-        self.resize(560, 180)
-
-        layout = QVBoxLayout(self)
-
-        dir_row = QHBoxLayout()
-        dir_row.addWidget(QLabel("Directory:"))
-        self.dir_edit = QLineEdit(default_dir)
-        dir_row.addWidget(self.dir_edit, 1)
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self._browse_directory)
-        dir_row.addWidget(browse_button)
-        layout.addLayout(dir_row)
-
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("File name:"))
-        self.name_edit = QLineEdit(default_name)
-        name_row.addWidget(self.name_edit, 1)
-        layout.addLayout(name_row)
-
-        self.size_edit: QLineEdit | None = None
-        if image_kind in ("hdf", "hds"):
-            size_row = QHBoxLayout()
-            size_row.addWidget(QLabel("Size (MB):"))
-            default_size_mb = NEW_IMAGE_PROFILES[image_kind].size_bytes // (1024 * 1024)
-            self.size_edit = QLineEdit(str(default_size_mb), self)
-            self.size_edit.setValidator(QIntValidator(1, 1024 * 1024, self.size_edit))
-            self.size_edit.setPlaceholderText("e.g. 10")
-            size_row.addWidget(self.size_edit, 1)
-            layout.addLayout(size_row)
-
-        buttons = QDialogButtonBox(parent=self)
-        create_button = buttons.addButton("Create", QDialogButtonBox.AcceptRole)
-        cancel_button = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
-        create_button.clicked.connect(self.accept)
-        cancel_button.clicked.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _browse_directory(self) -> None:
-        current = self.dir_edit.text().strip() or str(Path.home())
-        selected = QFileDialog.getExistingDirectory(self, "Select directory", current)
-        if selected:
-            self.dir_edit.setText(selected)
-
-    def values(self) -> tuple[str, str, int | None]:
-        size_mb = None
-        if self.size_edit is not None:
-            text = self.size_edit.text().strip()
-            if text:
-                size_mb = int(text)
-        return self.dir_edit.text().strip(), self.name_edit.text().strip(), size_mb
 
 
 class SpinnerWidget(QWidget):
@@ -297,8 +239,6 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         outer.addLayout(top)
 
-        self.btn_create_image = QPushButton("Create New Image")
-        self._create_image_menu = QMenu(self.btn_create_image)
         self.btn_open = QPushButton("Mount")
         self._mount_menu = QMenu(self.btn_open)
         self.btn_unmount = QPushButton("Unmount")
@@ -314,7 +254,6 @@ class MainWindow(QMainWindow):
         self.offset_combo.setMinimumWidth(250)
         self.lbl_info = QLabel("No image loaded")
 
-        top.addWidget(self.btn_create_image)
         top.addWidget(self.btn_open)
         top.addWidget(self.btn_unmount)
         top.addWidget(self.btn_refresh)
@@ -353,10 +292,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready")
 
         self._load_mount_history()
-        self._rebuild_create_image_menu()
         self._rebuild_mount_history_menu()
 
-        self.btn_create_image.clicked.connect(self._show_create_image_menu)
         self.btn_unmount.clicked.connect(self.unmount_image)
         self.btn_open.clicked.connect(self._show_mount_menu)
         self.btn_refresh.clicked.connect(self.refresh_tree)
@@ -408,21 +345,9 @@ class MainWindow(QMainWindow):
             act.setToolTip(path)
             act.triggered.connect(lambda _checked=False, selected=path: self._mount_image_path(selected))
 
-    def _rebuild_create_image_menu(self) -> None:
-        self._create_image_menu.clear()
-
-        for kind in ("hds", "hdf", "xdf"):
-            profile = NEW_IMAGE_PROFILES[kind]
-            act = self._create_image_menu.addAction(profile.label)
-            act.triggered.connect(lambda _checked=False, selected=kind: self.create_new_image(selected))
-
     def _show_mount_menu(self) -> None:
         pos = self.btn_open.mapToGlobal(self.btn_open.rect().bottomLeft())
         self._mount_menu.exec(pos)
-
-    def _show_create_image_menu(self) -> None:
-        pos = self.btn_create_image.mapToGlobal(self.btn_create_image.rect().bottomLeft())
-        self._create_image_menu.exec(pos)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -430,7 +355,6 @@ class MainWindow(QMainWindow):
             self._busy_overlay.setGeometry(self.centralWidget().rect())
 
     def _set_interaction_enabled(self, enabled: bool) -> None:
-        self.btn_create_image.setEnabled(enabled)
         self.btn_open.setEnabled(enabled)
         self.btn_unmount.setEnabled(enabled)
         self.btn_refresh.setEnabled(enabled)
@@ -981,60 +905,6 @@ class MainWindow(QMainWindow):
             parent_item.addChild(item)
             if bool(n["is_dir"]):
                 self._apply_tree_snapshot(n["children"], item)
-
-    def _default_new_image_directory(self) -> str:
-        if self.backend.image_path is not None:
-            return str(self.backend.image_path.parent)
-        if self._mount_history:
-            return str(Path(self._mount_history[0]).parent)
-        return str(Path.home())
-
-    def _build_new_image_path(self, directory: str, filename: str, image_kind: str) -> Path:
-        profile = NEW_IMAGE_PROFILES[image_kind]
-        name = filename.strip()
-        if not name:
-            raise ImageMountError("File name is required")
-        if Path(name).name != name:
-            raise ImageMountError("File name must not contain path separators")
-        if Path(name).suffix:
-            if Path(name).suffix.lower() != profile.suffix:
-                raise ImageMountError(f"File name must end with {profile.suffix}")
-            final_name = name
-        else:
-            final_name = f"{name}{profile.suffix}"
-        return Path(directory) / final_name
-
-    def create_new_image(self, image_kind: str) -> None:
-        profile = NEW_IMAGE_PROFILES[image_kind]
-        dlg = NewImageDialog(
-            self,
-            image_kind,
-            profile.label,
-            self._default_new_image_directory(),
-            f"new_image{profile.suffix}",
-        )
-        if dlg.exec() != QDialog.Accepted:
-            return
-
-        directory, filename, size_mb = dlg.values()
-        if not directory:
-            QMessageBox.information(self, "Create image", "Select a directory.")
-            return
-
-        try:
-            image_path = self._build_new_image_path(directory, filename, image_kind)
-        except Exception as exc:
-            QMessageBox.critical(self, "Create image failed", str(exc))
-            return
-
-        def work() -> str:
-            size_bytes = None if size_mb is None else size_mb * 1024 * 1024
-            return str(self.backend.create_new_image(image_path, image_kind, size_bytes=size_bytes))
-
-        def on_success(created_path: Any) -> None:
-            self.statusBar().showMessage(f"Image created: {created_path}")
-
-        self._run_busy_task("Creating image...", work, on_success, "Create image failed")
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(

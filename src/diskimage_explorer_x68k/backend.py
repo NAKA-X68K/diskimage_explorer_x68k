@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import io
-import math
-import tempfile
 from pathlib import Path, PurePosixPath
 import shutil
 from typing import Iterable
@@ -60,22 +58,6 @@ X68K_XDF_PROFILES: tuple[X68kFloppyProfile, ...] = (
 )
 
 X68K_DEFAULT_XDF_PROFILE = X68K_XDF_PROFILES[0]
-DEFAULT_HARD_DISK_IMAGE_SIZE = 10 * 1024 * 1024
-
-
-@dataclass(frozen=True)
-class NewImageProfile:
-    kind: str
-    suffix: str
-    label: str
-    size_bytes: int
-
-
-NEW_IMAGE_PROFILES: dict[str, NewImageProfile] = {
-    "hds": NewImageProfile("hds", ".hds", "New HDS", DEFAULT_HARD_DISK_IMAGE_SIZE),
-    "hdf": NewImageProfile("hdf", ".hdf", "New HDF", DEFAULT_HARD_DISK_IMAGE_SIZE),
-    "xdf": NewImageProfile("xdf", ".xdf", "New XDF", X68K_DEFAULT_XDF_PROFILE.file_size),
-}
 
 
 def _clean_fs_path(path: str) -> str:
@@ -407,95 +389,6 @@ def _initialize_empty_fat_tables(image: bytearray, fat_offset: int, fat_size_byt
         image[start : start + len(init)] = init
 
 
-def _create_x68k_xdf_image(image_path: Path, profile: X68kFloppyProfile) -> None:
-    root_dir_sectors = math.ceil(profile.root_entries * 32 / profile.bytes_per_sector)
-    fat_offset = profile.reserved_sectors * profile.bytes_per_sector
-    fat_size_bytes = profile.fat_sectors * profile.bytes_per_sector
-    root_offset = fat_offset + profile.fat_count * fat_size_bytes
-    data_offset = root_offset + root_dir_sectors * profile.bytes_per_sector
-
-    image = bytearray(profile.file_size)
-    image[0:512] = _build_x68k_raw_boot_sector(profile)
-    _initialize_empty_fat_tables(
-        image=image,
-        fat_offset=fat_offset,
-        fat_size_bytes=fat_size_bytes,
-        fat_count=profile.fat_count,
-        media=profile.media,
-        fat_type=profile.fat_type,
-    )
-
-    if data_offset > len(image):
-        raise ImageMountError("Invalid XDF profile layout")
-
-    image_path.write_bytes(image)
-
-
-def _create_standard_fat_image(image_path: Path, size_bytes: int, label: str) -> None:
-    image_path.touch(exist_ok=False)
-    fat = PyFat()
-    try:
-        fat.mkfs(
-            filename=str(image_path),
-            fat_type=PyFat.FAT_TYPE_FAT16,
-            size=size_bytes,
-            sector_size=512,
-            number_of_fats=2,
-            label=label,
-            media_type=0xF8,
-        )
-    finally:
-        fat.close()
-
-
-def _build_x68k_partition_table(kind: str, start_offset: int, partition_size: int) -> bytearray:
-    if kind == "hds":
-        table = bytearray(0x1000)
-        table[0x800:0x804] = b"X68K"
-        table[0x810:0x818] = b"Human68k"
-        start_sector = start_offset // 1024
-        part_sectors = partition_size // 1024
-        table[0x818:0x81C] = start_sector.to_bytes(4, "big")
-        table[0x81C:0x820] = part_sectors.to_bytes(4, "big")
-        return table
-
-    table = bytearray(0x1000)
-    table[0x400:0x404] = b"X68K"
-    table[0x410:0x418] = b"Human68k"
-    start_record = start_offset // 256
-    part_records = partition_size // 256
-    table[0x418:0x41C] = start_record.to_bytes(4, "big")
-    table[0x41C:0x420] = part_records.to_bytes(4, "big")
-    return table
-
-
-def _create_x68k_hard_disk_image(image_path: Path, image_kind: str, size_bytes: int, label: str) -> None:
-    header_size = 0x1000
-    partition_offset = 0x1000
-    partition_size = size_bytes - partition_offset
-    if partition_size < 1024 * 1024:
-        raise ImageMountError("HDF/HDS size must leave at least 1MB for the partition")
-
-    temp_dir = Path(tempfile.mkdtemp(prefix="diskimage-x68k-"))
-    temp_fat = temp_dir / f"partition{image_path.suffix}"
-    try:
-        _create_standard_fat_image(temp_fat, partition_size, label=label)
-        fat_bytes = bytearray(temp_fat.read_bytes())
-        if len(fat_bytes) != partition_size:
-            fat_bytes = fat_bytes[:partition_size] + bytes(max(0, partition_size - len(fat_bytes)))
-
-        media_byte = 0xF7 if image_kind == "hds" else 0xF8
-        fat_bytes[0:512] = _build_x68k_raw_boot_sector_from_fat_boot(fat_bytes[0:512], media_byte)
-
-        image = _build_x68k_partition_table(image_kind, partition_offset, partition_size)
-        if len(image) < size_bytes:
-            image.extend(bytes(size_bytes - len(image)))
-        image[partition_offset : partition_offset + partition_size] = fat_bytes
-        image_path.write_bytes(image[:size_bytes])
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
 class X68kFatAdapter(io.RawIOBase):
     def __init__(self, image_path: Path, partition_offset: int):
         super().__init__()
@@ -668,36 +561,6 @@ class FatImageBackend:
 
     def get_offset_label(self, offset: int) -> str:
         return self._offset_label_map.get(offset, f"{offset} (0x{offset:08X})")
-
-    def create_new_image(self, image_file: str | Path, image_kind: str, size_bytes: int | None = None) -> Path:
-        image_path = Path(image_file)
-        profile = NEW_IMAGE_PROFILES.get(image_kind.lower())
-        if profile is None:
-            raise ImageMountError(f"Unsupported image type: {image_kind}")
-        if image_path.exists():
-            raise ImageMountError(f"File already exists: {image_path}")
-        if not image_path.parent.exists():
-            raise ImageMountError(f"Directory not found: {image_path.parent}")
-
-        try:
-            if profile.kind == "xdf":
-                if size_bytes is not None and size_bytes != profile.size_bytes:
-                    raise ImageMountError("XDF size is fixed and cannot be changed")
-                _create_x68k_xdf_image(image_path, X68K_DEFAULT_XDF_PROFILE)
-            else:
-                target_size = size_bytes if size_bytes is not None else profile.size_bytes
-                if target_size < 1024 * 1024:
-                    raise ImageMountError("HDF/HDS size must be at least 1MB")
-                _create_x68k_hard_disk_image(image_path, profile.kind, target_size, label="X68KDISK")
-        except Exception:
-            try:
-                if image_path.exists():
-                    image_path.unlink()
-            except OSError:
-                pass
-            raise
-
-        return image_path
 
     def create_backup_now(self) -> Path:
         self._ensure_backup()
