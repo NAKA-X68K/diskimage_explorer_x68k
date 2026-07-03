@@ -73,6 +73,71 @@ def _join_fs_path(base: str, name: str) -> str:
     return f"{base.rstrip('/')}/{name}"
 
 
+def _normalize_path_for_x68k(path: str) -> str:
+    """Normalize path components to uppercase for X68000 compatibility.
+    
+    X68000 filesystems only support uppercase filenames. This function
+    converts each path component to uppercase while preserving the directory
+    structure.
+    
+    Example: "/path/to/MyFile.TXT" -> "/PATH/TO/MYFILE.TXT"
+    """
+    p = PurePosixPath(path)
+    parts = [part.upper() for part in p.parts if part and part != "/"]
+    if parts:
+        return "/" + "/".join(parts)
+    return "/"
+
+
+def _to_fat_sfn(filename: str) -> str:
+    """Convert filename to FAT 8.3 Short File Name (SFN) format for X68000.
+    
+    This avoids LFN (Long File Name) entry generation which X68000/XEiJ cannot handle.
+    The resulting filename is always uppercase and follows FAT SFN rules:
+    - Name part: max 8 characters (uppercase)
+    - Extension: max 3 characters (uppercase)
+    - Names longer than 8 chars are truncated with ~1 suffix: VERYLONGNAME.TXT -> VERYLO~1.TXT
+    
+    This allows small filenames while avoiding white window errors in XEiJ.
+    
+    Args:
+        filename: Input filename (any case, may include LFN-triggering chars)
+    
+    Returns:
+        FAT SFN format filename (always uppercase, LFN-safe)
+        
+    Examples:
+        "myfile.txt" -> "MYFILE.TXT"
+        "test" -> "TEST"
+        "verylongfilename.txt" -> "VERYLO~1.TXT"
+    """
+    filename = filename.upper()
+    
+    # Split name and extension
+    if "." in filename:
+        parts = filename.rsplit(".", 1)
+        name = parts[0]
+        ext = parts[1]
+    else:
+        name = filename
+        ext = ""
+    
+    # Ensure name is max 8 chars
+    if len(name) > 8:
+        # Truncate and add ~1 suffix
+        name = name[:6] + "~1"
+    
+    # Ensure extension is max 3 chars
+    if len(ext) > 3:
+        ext = ext[:3]
+    
+    # Combine
+    if ext:
+        return f"{name}.{ext}"
+    else:
+        return name
+
+
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -662,14 +727,14 @@ class FatImageBackend:
             self.fs = PyFatBytesIOFS(
                 fp=self._adapter,
                 offset=0,
-                preserve_case=True,
+                preserve_case=False,
                 lazy_load=True,
             )
         else:
             self.fs = PyFatFS(
                 filename=str(image_path),
                 offset=offset,
-                preserve_case=True,
+                preserve_case=False,
                 read_only=False,
                 lazy_load=True,
             )
@@ -839,13 +904,17 @@ class FatImageBackend:
         target_dir = _clean_fs_path(dest_dir)
 
         if local_path.is_dir():
-            dst = _join_fs_path(target_dir, local_path.name)
+            # Convert to FAT SFN to avoid LFN entries
+            sfn_name = _to_fat_sfn(local_path.name)
+            dst = _join_fs_path(target_dir, sfn_name)
             fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
 
-        target_file = _join_fs_path(target_dir, local_path.name)
+        # Convert to FAT SFN to avoid LFN entries
+        sfn_name = _to_fat_sfn(local_path.name)
+        target_file = _join_fs_path(target_dir, sfn_name)
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
@@ -862,12 +931,30 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        fs.makedir(_clean_fs_path(fs_dir_path), recreate=False)
+        # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
+        p = PurePosixPath(fs_dir_path)
+        parent = str(p.parent)
+        name = p.name
+        
+        # Apply SFN conversion to avoid LFN
+        sfn_name = _to_fat_sfn(name)
+        sfn_path = _join_fs_path(parent, sfn_name)
+        
+        fs.makedir(_clean_fs_path(sfn_path), recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        with fs.openbin(_clean_fs_path(fs_file_path), "w"):
+        # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
+        p = PurePosixPath(fs_file_path)
+        parent = str(p.parent)
+        name = p.name
+        
+        # Apply SFN conversion to avoid LFN
+        sfn_name = _to_fat_sfn(name)
+        sfn_path = _join_fs_path(parent, sfn_name)
+        
+        with fs.openbin(_clean_fs_path(sfn_path), "w"):
             pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:

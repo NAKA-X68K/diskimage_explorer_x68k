@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .backend import FatImageBackend, ImageMountError
+from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn
 
 
 def _join(base: str, name: str) -> str:
@@ -1043,9 +1043,18 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.backend.create_empty_file(_join(target_dir, name.strip()))
+            # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
+            # SFN conversion: avoids white window error in XEiJ
+            sfn_name = _to_fat_sfn(name.strip())
+            self.backend.create_empty_file(_join(target_dir, sfn_name))
             self.refresh_tree()
-            self.statusBar().showMessage("File created")
+            
+            # Show message with converted filename
+            if sfn_name != name.strip():
+                msg = f"File created as: {sfn_name}"
+            else:
+                msg = "File created"
+            self.statusBar().showMessage(msg)
         except Exception as exc:
             QMessageBox.critical(self, "Create file failed", str(exc))
 
@@ -1059,9 +1068,18 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.backend.create_dir(_join(target_dir, name.strip()))
+            # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
+            # SFN conversion: avoids white window error in XEiJ
+            sfn_name = _to_fat_sfn(name.strip())
+            self.backend.create_dir(_join(target_dir, sfn_name))
             self.refresh_tree()
-            self.statusBar().showMessage("Folder created")
+            
+            # Show message with converted filename
+            if sfn_name != name.strip():
+                msg = f"Folder created as: {sfn_name}"
+            else:
+                msg = "Folder created"
+            self.statusBar().showMessage(msg)
         except Exception as exc:
             QMessageBox.critical(self, "Create folder failed", str(exc))
 
