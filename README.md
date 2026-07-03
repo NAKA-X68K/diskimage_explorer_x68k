@@ -142,7 +142,7 @@ Windows での最短手順:
 5. `.\scripts\build-windows-msi.ps1 -SkipBuild`
 6. `dist\diskimage_explorer_x68k-windows-<version>.msi` を配布
 
-MSI ビルドで `wix.exe : error WIX0118: Additional argument 'heat' was unexpected` が出る場合:
+MSI ビルドで `wix.exe : error WIX0118: Additional argument ... was unexpected` が出る場合:
 
 1. `.\scripts\setup-windows-msi-tools.ps1` を再実行して WiX を更新する
 2. `.\scripts\build-windows-msi.ps1 -SkipBuild` を再実行する

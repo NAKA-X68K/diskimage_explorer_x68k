@@ -95,35 +95,9 @@ if (-not (Test-Path $ProductWxs)) {
   throw "WiX source not found: $ProductWxs"
 }
 
-$ObjDir = Join-Path $ProjectRoot "installer\windows\obj"
-New-Item -Path $ObjDir -ItemType Directory -Force | Out-Null
-$HarvestWxs = Join-Path $ObjDir "AppFiles.wxs"
-
-Invoke-NativeChecked -FilePath $WixExe -Arguments @("extension", "add", "WixToolset.Heat") -Step "wix extension add WixToolset.Heat"
-Write-Host "==> Harvesting dist files"
-$harvested = $false
-
-# Preferred for WiX v4 tool syntax.
-& $WixExe harvest directory "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
-if ($LASTEXITCODE -eq 0 -and (Test-Path $HarvestWxs)) {
-  $harvested = $true
-}
-
-# Backward compatibility for environments that still expose heat-style command shape.
-if (-not $harvested) {
-  & $WixExe heat dir "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
-  if ($LASTEXITCODE -eq 0 -and (Test-Path $HarvestWxs)) {
-    $harvested = $true
-  }
-}
-
-if (-not $harvested) {
-  throw "Harvest step failed. WiX command syntax may differ by version. Try updating WiX (`dotnet tool update --global wix`) and rerun."
-}
-
 $MsiOut = Join-Path $ProjectRoot "dist\diskimage_explorer_x68k-windows-$Version.msi"
 Write-Host "==> Building MSI"
-Invoke-NativeChecked -FilePath $WixExe -Arguments @("build", "-nologo", "-d", "AppVersion=$Version", "-d", "SourceDir=$DistDir", "$ProductWxs", "$HarvestWxs", "-o", "$MsiOut") -Step "wix build"
+Invoke-NativeChecked -FilePath $WixExe -Arguments @("build", "-nologo", "-d", "AppVersion=$Version", "-d", "SourceDir=$DistDir", "$ProductWxs", "-o", "$MsiOut") -Step "wix build"
 
 if (Test-Path $MsiOut) {
   Write-Host "MSI complete: $MsiOut"
