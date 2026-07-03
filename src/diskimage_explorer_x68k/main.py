@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFrame,
     QFileDialog,
     QHBoxLayout,
@@ -249,6 +250,10 @@ class MainWindow(QMainWindow):
         self.btn_backup_now = QPushButton("Backup Now")
         self.chk_backup_on_open = QCheckBox("Backup on Open")
         self.chk_backup_on_open.setChecked(True)
+        self.chk_vfat_twentyone = QCheckBox("VFAT (TwentyOne)")
+        vfat_enabled = self._settings.value("x68k_vfat_twentyone", False, type=bool)
+        self.chk_vfat_twentyone.setChecked(bool(vfat_enabled))
+        self.backend.set_x68k_vfat_enabled(bool(vfat_enabled))
 
         self.offset_combo = QComboBox()
         self.offset_combo.setMinimumWidth(250)
@@ -262,6 +267,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.btn_delete)
         top.addWidget(self.btn_backup_now)
         top.addWidget(self.chk_backup_on_open)
+        top.addWidget(self.chk_vfat_twentyone)
         top.addWidget(QLabel("Offset:"))
         top.addWidget(self.offset_combo)
         top.addStretch(1)
@@ -301,6 +307,7 @@ class MainWindow(QMainWindow):
         self.btn_new_dir.clicked.connect(self.create_new_dir)
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_backup_now.clicked.connect(self.backup_now)
+        self.chk_vfat_twentyone.toggled.connect(self._on_vfat_mode_toggled)
         self.offset_combo.currentIndexChanged.connect(self.on_offset_changed)
         self.tree.localPathsDropped.connect(self.on_local_paths_dropped)
         self.tree.customContextMenuRequested.connect(self._show_tree_context_menu)
@@ -363,8 +370,15 @@ class MainWindow(QMainWindow):
         self.btn_delete.setEnabled(enabled)
         self.btn_backup_now.setEnabled(enabled)
         self.chk_backup_on_open.setEnabled(enabled)
+        self.chk_vfat_twentyone.setEnabled(enabled)
         self.offset_combo.setEnabled(enabled)
         self.tree.setEnabled(enabled)
+
+    def _on_vfat_mode_toggled(self, enabled: bool) -> None:
+        self.backend.set_x68k_vfat_enabled(enabled)
+        self._settings.setValue("x68k_vfat_twentyone", bool(enabled))
+        mode = "ON" if enabled else "OFF"
+        self.statusBar().showMessage(f"VFAT (TwentyOne) mode: {mode}")
 
     def _is_mounted(self) -> bool:
         return self.backend.fs is not None
@@ -740,6 +754,15 @@ class MainWindow(QMainWindow):
         editor.setReadOnly(False)
         save_status = QLabel("")
 
+        def normalize_to_x68k_text_newline(text: str) -> str:
+            unified = text.replace("\r\n", "\n").replace("\r", "\n")
+            return unified.replace("\n", "\r\n")
+
+        buttons = QDialogButtonBox(parent=dlg)
+        btn_save = buttons.addButton(QDialogButtonBox.Save)
+        btn_close = buttons.addButton(QDialogButtonBox.Close)
+        btn_close.clicked.connect(dlg.reject)
+
         def update_save_state() -> None:
             selected = enc_combo.currentText()
             if selected == "auto":
@@ -747,22 +770,24 @@ class MainWindow(QMainWindow):
                 return
 
             try:
-                encoded = editor.toPlainText().encode(selected)
+                encoded = normalize_to_x68k_text_newline(editor.toPlainText()).encode(selected)
             except UnicodeEncodeError:
                 btn_save.setEnabled(False)
-                def update_save_state() -> None:
-                    selected = enc_combo.currentText()
-                    if selected == "auto":
-                        btn_save.setEnabled(False)
-                        return
+                return
 
-                    try:
-                        encoded = editor.toPlainText().encode(selected)
-                    except UnicodeEncodeError:
-                        btn_save.setEnabled(False)
-                        return
+            btn_save.setEnabled(encoded != data)
 
-                    btn_save.setEnabled(encoded != data)
+        def render_text(selected_encoding: str) -> None:
+            if selected_encoding == "auto":
+                auto_decoded = self._decode_text_preview(data)
+                if auto_decoded is None:
+                    editor.setPlainText("(Unable to decode text with auto detection)")
+                    enc_status.setText("Auto detected: unknown")
+                    save_status.setText("")
+                    dlg.setWindowTitle(f"Edit File - {name}")
+                    update_save_state()
+                    return
+                current_text, current_enc = auto_decoded
                 enc_status.setText(f"Auto detected: {current_enc}")
             else:
                 try:
@@ -773,15 +798,12 @@ class MainWindow(QMainWindow):
                     enc_status.setText(f"Manual: {selected_encoding} (with replacement)")
 
             editor.setPlainText(current_text)
-        update_save_state()
+            save_status.setText("")
+            dlg.setWindowTitle(f"Edit File - {name}")
+            update_save_state()
 
         enc_combo.currentTextChanged.connect(render_text)
         render_text(enc_combo.currentText())
-
-        buttons = QDialogButtonBox(parent=dlg)
-        btn_save = buttons.addButton(QDialogButtonBox.Save)
-        btn_close = buttons.addButton(QDialogButtonBox.Close)
-        btn_close.clicked.connect(dlg.reject)
 
         def save_current_text() -> None:
             selected = enc_combo.currentText()
@@ -789,7 +811,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(dlg, "Edit File", "Select an explicit encoding before save.")
                 return
 
-            text = editor.toPlainText()
+            text = normalize_to_x68k_text_newline(editor.toPlainText())
             try:
                 encoded = text.encode(selected)
             except UnicodeEncodeError as exc:
@@ -843,8 +865,6 @@ class MainWindow(QMainWindow):
 
         idx = self.offset_combo.findData(self.backend.current_offset)
         if idx >= 0:
-            render_text(enc_combo.currentText())
-            update_save_state()
             self.offset_combo.setCurrentIndex(idx)
 
         self._updating_offset_combo = False

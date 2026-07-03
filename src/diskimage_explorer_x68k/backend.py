@@ -73,6 +73,32 @@ def _join_fs_path(base: str, name: str) -> str:
     return f"{base.rstrip('/')}/{name}"
 
 
+def _normalize_x68k_83_path(path: str) -> str:
+    p = PurePosixPath(_clean_fs_path(path))
+    normalized: list[str] = []
+    for part in p.parts:
+        if part in ("", "/"):
+            continue
+        if part in (".", ".."):
+            raise ImageMountError("Relative path components are not supported")
+
+        if "." in part:
+            stem, ext = part.rsplit(".", 1)
+        else:
+            stem, ext = part, ""
+
+        if not stem:
+            raise ImageMountError(f"Invalid file name for X68000: {part}")
+        if len(stem) > 8 or len(ext) > 3:
+            raise ImageMountError(f"X68000 file names must be 8.3 format: {part}")
+
+        stem_u = stem.upper()
+        ext_u = ext.upper()
+        normalized.append(stem_u if not ext_u else f"{stem_u}.{ext_u}")
+
+    return "/" + "/".join(normalized)
+
+
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -404,6 +430,31 @@ class X68kFatAdapter(io.RawIOBase):
         self._raw_first = bytearray(raw)
         self._raw_media_original = self._raw_first[0x1C]
         self._synth_first = bytearray(_build_x68k_synthetic_boot_sector(self._raw_first))
+        self._fat_media_byte_offsets = self._build_fat_media_byte_offsets()
+
+    def _build_fat_media_byte_offsets(self) -> list[int]:
+        bps = int.from_bytes(self._raw_first[0x12:0x14], "big")
+        reserved = int.from_bytes(self._raw_first[0x16:0x18], "big")
+        fat_count = self._raw_first[0x15]
+        fat_sectors = self._raw_first[0x1D]
+        if bps <= 0 or reserved <= 0 or fat_count <= 0 or fat_sectors <= 0:
+            return []
+
+        fat_size_bytes = fat_sectors * bps
+        fat0 = reserved * bps
+        return [fat0 + i * fat_size_bytes for i in range(fat_count)]
+
+    def _enforce_fat_media_descriptor(self) -> None:
+        if not self._fat_media_byte_offsets:
+            return
+
+        self._fp.seek(0, io.SEEK_END)
+        end = max(0, self._fp.tell() - self._base)
+        for off in self._fat_media_byte_offsets:
+            if off < 0 or off >= end:
+                continue
+            self._fp.seek(self._base + off)
+            self._fp.write(bytes((self._raw_media_original,)))
 
     def _sync_synth_to_raw(self) -> None:
         bps = int.from_bytes(self._synth_first[0x0B:0x0D], "little")
@@ -421,11 +472,8 @@ class X68kFatAdapter(io.RawIOBase):
         self._raw_first[0x16:0x18] = rsvd.to_bytes(2, "big")
         self._raw_first[0x18:0x1A] = root.to_bytes(2, "big")
         self._raw_first[0x1A:0x1C] = tot16.to_bytes(2, "big")
-        # Preserve original X68000 media byte (e.g. 0xF7) on disk.
-        if self._raw_media_original == 0xF7:
-            self._raw_first[0x1C] = self._raw_media_original
-        else:
-            self._raw_first[0x1C] = media
+        # Always preserve the original X68000 media byte on disk.
+        self._raw_first[0x1C] = self._raw_media_original
         self._raw_first[0x1D] = fatsz16 & 0xFF
 
     def readable(self) -> bool:
@@ -503,6 +551,7 @@ class X68kFatAdapter(io.RawIOBase):
         self._sync_synth_to_raw()
         self._fp.seek(self._base)
         self._fp.write(self._raw_first)
+        self._enforce_fat_media_descriptor()
         return n
 
     def flush(self) -> None:
@@ -534,8 +583,18 @@ class FatImageBackend:
         self.fs: PyFatFS | None = None
         self._adapter: X68kFatAdapter | None = None
         self._mount_kind: str = "fat"
+        self._x68k_vfat_enabled: bool = False
         self._backup_path: Path | None = None
         self._backup_done = False
+
+    def set_x68k_vfat_enabled(self, enabled: bool) -> None:
+        self._x68k_vfat_enabled = bool(enabled)
+
+    def _normalize_target_path_for_mode(self, path: str) -> str:
+        target = _clean_fs_path(path)
+        if self._mount_kind == "x68k-be-bpb" and not self._x68k_vfat_enabled:
+            target = _normalize_x68k_83_path(target)
+        return target
 
     @property
     def backup_path(self) -> Path | None:
@@ -602,20 +661,35 @@ class FatImageBackend:
         self._offset_label_map = {}
 
         floppy_candidate = detect_x68k_floppy_candidate(image_path)
-        if floppy_candidate is not None:
-            self.mount_candidates.append(floppy_candidate)
+        fat_candidates: list[MountCandidate] = []
+        x68k_candidates = detect_x68k_partition_candidates(image_path)
 
         fat_offsets = detect_fat_offsets(image_path)
         for off in fat_offsets:
-            c = MountCandidate(kind="fat", offset=off, label=f"FAT @ 0x{off:08X}")
-            self.mount_candidates.append(c)
+            fat_candidates.append(MountCandidate(kind="fat", offset=off, label=f"FAT @ 0x{off:08X}"))
 
-        x68k_candidates = detect_x68k_partition_candidates(image_path)
-        self.mount_candidates.extend(x68k_candidates)
+        # Prefer native X68000 mappings for hard disk images.
+        suffix = image_path.suffix.lower()
+        if suffix in (".hds", ".hdf") and x68k_candidates:
+            self.mount_candidates.extend(x68k_candidates)
+            self.mount_candidates.extend(fat_candidates)
+        else:
+            if floppy_candidate is not None:
+                self.mount_candidates.append(floppy_candidate)
+            self.mount_candidates.extend(fat_candidates)
+            self.mount_candidates.extend(x68k_candidates)
 
         for c in self.mount_candidates:
             if c.offset not in self.offset_candidates:
                 self.offset_candidates.append(c.offset)
+                self._offset_kind_map[c.offset] = c.kind
+                self._offset_label_map[c.offset] = c.label
+                continue
+
+            # If both FAT and X68000 candidates point to the same offset,
+            # keep the X68000 label/kind so remount uses the adapter path.
+            old_kind = self._offset_kind_map.get(c.offset)
+            if old_kind == "fat" and c.kind != "fat":
                 self._offset_kind_map[c.offset] = c.kind
                 self._offset_label_map[c.offset] = c.label
 
@@ -729,16 +803,16 @@ class FatImageBackend:
     def import_local_path(self, local_path: Path, dest_dir: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        target_dir = _clean_fs_path(dest_dir)
+        target_dir = self._normalize_target_path_for_mode(dest_dir)
 
         if local_path.is_dir():
-            dst = _join_fs_path(target_dir, local_path.name)
+            dst = self._normalize_target_path_for_mode(_join_fs_path(target_dir, local_path.name))
             fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
 
-        target_file = _join_fs_path(target_dir, local_path.name)
+        target_file = self._normalize_target_path_for_mode(_join_fs_path(target_dir, local_path.name))
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
@@ -755,12 +829,14 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        fs.makedir(_clean_fs_path(fs_dir_path), recreate=False)
+        target = self._normalize_target_path_for_mode(fs_dir_path)
+        fs.makedir(target, recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        with fs.openbin(_clean_fs_path(fs_file_path), "w"):
+        target = self._normalize_target_path_for_mode(fs_file_path)
+        with fs.openbin(target, "w"):
             pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:

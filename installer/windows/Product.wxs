@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="diskimage_explorer_x68k"
+    Manufacturer="NAKA-X68K"
+    Version="$(var.AppVersion)"
+    UpgradeCode="{35A1CD0F-6C08-4ADF-9329-C5590C4E4ACB}"
+    Language="1041"
+    Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="diskimage_explorer_x68k" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="diskimage_explorer_x68k" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+  </Package>
+</Wix>

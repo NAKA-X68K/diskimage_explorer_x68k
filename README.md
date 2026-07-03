@@ -46,12 +46,21 @@ python -m diskimage_explorer_x68k.main
 ## 使い方
 
 1. `Backup on Open` を必要に応じて ON/OFF
-2. `Mount` で既存イメージを開く
-3. `Offset` でパーティション/候補を切り替える
-4. 必要なら `Backup Now` で明示バックアップを作成
-5. ツリーへローカルファイル/フォルダを D&D
-6. ファイル上に単体ファイルをドロップすると置換
-7. `New File`, `New Folder`, `Delete` で編集
+2. `VFAT (TwentyOne)` を必要に応じて ON/OFF
+3. `Mount` で既存イメージを開く
+4. `Offset` でパーティション/候補を切り替える
+5. 必要なら `Backup Now` で明示バックアップを作成
+6. ツリーへローカルファイル/フォルダを D&D
+7. ファイル上に単体ファイルをドロップすると置換
+8. `New File`, `New Folder`, `Delete` で編集
+
+### VFAT (TwentyOne) モード
+
+- `VFAT (TwentyOne)` が OFF の場合:
+	- X68000 マウントでは LFN を作らないように 8.3 短名へ正規化します（互換性優先）。
+- `VFAT (TwentyOne)` が ON の場合:
+	- 長い名前・小文字・マルチドットを含む名前をそのまま扱います（LFN/VFAT）。
+	- X68000 側で `VTwentyOne.x` など VFAT 対応ドライバを導入している環境向けです。
 
 ## 安全対策
 
@@ -80,9 +89,43 @@ Windows (PowerShell):
 .\scripts\build-windows.ps1
 ```
 
+Windows インストーラ (Inno Setup):
+
+```powershell
+.\scripts\build-windows-installer.ps1
+```
+
+- Inno Setup 6 が必要です（`ISCC.exe`）。
+- 既定では PyInstaller ビルド後にインストーラを生成します。
+- すでに `dist/diskimage_explorer_x68k/` がある場合は次でビルド工程を省略できます。
+
+```powershell
+.\scripts\build-windows-installer.ps1 -SkipBuild
+```
+
+Windows MSI (WiX v4):
+
+```powershell
+.\scripts\build-windows-msi.ps1
+```
+
+- 既定では PyInstaller ビルド後に MSI を生成します。
+- すでに `dist/diskimage_explorer_x68k/` がある場合は次でビルド工程を省略できます。
+
+```powershell
+.\scripts\build-windows-msi.ps1 -SkipBuild
+```
+
+注意:
+
+- `dist/diskimage_explorer_x68k-windows-setup-<version>.exe` は Windows 上で `build-windows-installer.ps1` を実行したときに生成されます。
+- macOS で作成した `dist/diskimage_explorer_x68k/` は macOS バイナリのため、そのままでは Windows インストーラ出力に使えません。
+
 生成物:
 
 - `dist/diskimage_explorer_x68k/`
+- `dist/diskimage_explorer_x68k-windows-setup-<version>.exe` (Windows installer)
+- `dist/diskimage_explorer_x68k-windows-<version>.msi` (Windows MSI)
 - `dist/diskimage_explorer_x68k.app` (macOS app build)
 - `dist/diskimage_explorer_x68k-mac.dmg` (macOS DMG build)
 
@@ -109,7 +152,9 @@ Windows (PowerShell):
 本ソフトウェアは無保証です。本ソフトウェアの使用により生じた損害（ディスクイメージの破損、データ損失などを含む）について、作者は一切の責任を負いかねます。自己責任でご利用ください。
 
 ## 再配布について
+
 本ソフトウェアの再配布は自由ですが、以下の情報を明記してください。
+
 - オリジナルソースのURL: https://github.com/NAKA-X68K/diskimage_explorer_x68k
 
 ## バグ報告・お問い合わせ
