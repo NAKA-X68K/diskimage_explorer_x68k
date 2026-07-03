@@ -1,8 +1,8 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [switch]$SkipBuild
 )
+
+$ErrorActionPreference = "Stop"
 
 if ([System.Environment]::OSVersion.Platform -ne "Win32NT") {
   throw "This script must be run on Windows."

@@ -1,8 +1,8 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [switch]$SkipBuild
 )
+
+$ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
