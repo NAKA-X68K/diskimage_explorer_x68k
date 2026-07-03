@@ -43,6 +43,35 @@ function New-WixId {
   }
 }
 
+function Get-RelativePathCompat {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$BasePath,
+    [Parameter(Mandatory = $true)]
+    [string]$TargetPath
+  )
+
+  $pathType = [System.IO.Path]::DirectorySeparatorChar
+  $baseFull = [System.IO.Path]::GetFullPath($BasePath)
+  $targetFull = [System.IO.Path]::GetFullPath($TargetPath)
+
+  if (-not $baseFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+    $baseFull += [System.IO.Path]::DirectorySeparatorChar
+  }
+
+  try {
+    # Available in newer runtimes.
+    return [System.IO.Path]::GetRelativePath($baseFull, $targetFull)
+  }
+  catch {
+    # Fallback for Windows PowerShell 5 / older .NET.
+    $baseUri = New-Object System.Uri($baseFull)
+    $targetUri = New-Object System.Uri($targetFull)
+    $relUri = $baseUri.MakeRelativeUri($targetUri)
+    return [System.Uri]::UnescapeDataString($relUri.ToString()).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+  }
+}
+
 function Build-DirectoryTree {
   param(
     [System.Collections.IDictionary]$Nodes,
@@ -98,7 +127,7 @@ function Write-WixAppFilesFragment {
   Build-DirectoryTree -Nodes $nodes -RelativeDir ""
 
   foreach ($file in $files) {
-    $relPath = [System.IO.Path]::GetRelativePath($DistDir, $file.FullName)
+    $relPath = Get-RelativePathCompat -BasePath $DistDir -TargetPath $file.FullName
     $relPath = $relPath.Replace("/", "\\")
     $relDir = [System.IO.Path]::GetDirectoryName($relPath)
     if ($relDir -eq "." -or $null -eq $relDir) {
