@@ -1,1 +1,1 @@
-"""X68000 HDS/HDF editor package."""
+"""X68000 HDF/HDS/XDF editor package."""

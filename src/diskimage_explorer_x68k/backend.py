@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import io
+import math
+import tempfile
 from pathlib import Path, PurePosixPath
 import shutil
 from typing import Iterable
 
+from pyfatfs.PyFat import PyFat
 from pyfatfs.PyFatFS import PyFatFS, PyFatBytesIOFS
 
 
@@ -28,6 +31,51 @@ class MountCandidate:
     kind: str
     offset: int
     label: str
+
+
+@dataclass(frozen=True)
+class X68kFloppyProfile:
+    name: str
+    bytes_per_sector: int
+    sectors_per_cluster: int
+    fat_count: int
+    reserved_sectors: int
+    root_entries: int
+    total_sectors: int
+    media: int
+    fat_sectors: int
+    fat_type: int
+
+    @property
+    def file_size(self) -> int:
+        return self.bytes_per_sector * self.total_sectors
+
+
+X68K_XDF_PROFILES: tuple[X68kFloppyProfile, ...] = (
+    X68kFloppyProfile("2HD (1232KB)", 1024, 1, 2, 1, 192, 1232, 0xFE, 2, PyFat.FAT_TYPE_FAT12),
+    X68kFloppyProfile("2HC (1200KB)", 512, 1, 2, 1, 224, 2400, 0xFD, 7, PyFat.FAT_TYPE_FAT12),
+    X68kFloppyProfile("2DD (640KB)", 512, 2, 2, 1, 112, 1280, 0xFB, 2, PyFat.FAT_TYPE_FAT12),
+    X68kFloppyProfile("2DD (720KB)", 512, 2, 2, 1, 112, 1440, 0xFC, 3, PyFat.FAT_TYPE_FAT12),
+    X68kFloppyProfile("2HQ (1440KB)", 512, 1, 2, 1, 224, 2880, 0xFA, 9, PyFat.FAT_TYPE_FAT12),
+)
+
+X68K_DEFAULT_XDF_PROFILE = X68K_XDF_PROFILES[0]
+DEFAULT_HARD_DISK_IMAGE_SIZE = 10 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class NewImageProfile:
+    kind: str
+    suffix: str
+    label: str
+    size_bytes: int
+
+
+NEW_IMAGE_PROFILES: dict[str, NewImageProfile] = {
+    "hds": NewImageProfile("hds", ".hds", "New HDS", DEFAULT_HARD_DISK_IMAGE_SIZE),
+    "hdf": NewImageProfile("hdf", ".hdf", "New HDF", DEFAULT_HARD_DISK_IMAGE_SIZE),
+    "xdf": NewImageProfile("xdf", ".xdf", "New XDF", X68K_DEFAULT_XDF_PROFILE.file_size),
+}
 
 
 def _clean_fs_path(path: str) -> str:
@@ -223,6 +271,43 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
     return uniq
 
 
+def detect_x68k_floppy_candidate(image_path: Path) -> MountCandidate | None:
+    file_size = image_path.stat().st_size
+    with image_path.open("rb") as fp:
+        head = fp.read(512)
+
+    bpb = _x68k_bpb_at(head, 0)
+    if bpb is None:
+        return None
+
+    for profile in X68K_XDF_PROFILES:
+        if file_size != profile.file_size:
+            continue
+        if bpb["bytes_per_sector"] != profile.bytes_per_sector:
+            continue
+        if bpb["sectors_per_cluster"] != profile.sectors_per_cluster:
+            continue
+        if bpb["fat_count"] != profile.fat_count:
+            continue
+        if bpb["reserved_sectors"] != profile.reserved_sectors:
+            continue
+        if bpb["root_entries"] != profile.root_entries:
+            continue
+        if bpb["total_sectors"] != profile.total_sectors:
+            continue
+        if bpb["media"] != profile.media:
+            continue
+        if bpb["fat_sectors"] != profile.fat_sectors:
+            continue
+        return MountCandidate(
+            kind="x68k-be-bpb",
+            offset=0,
+            label=f"X68K floppy {profile.name} @ 0x00000000",
+        )
+
+    return None
+
+
 def _build_x68k_synthetic_boot_sector(raw_first_sector: bytes) -> bytes:
     out = bytearray(512)
     out[0:3] = b"\xEB\x3C\x90"
@@ -268,6 +353,147 @@ def _build_x68k_synthetic_boot_sector(raw_first_sector: bytes) -> bytes:
     out[0x36:0x3E] = b"FAT16   "
     out[510:512] = b"\x55\xAA"
     return bytes(out)
+
+
+def _build_x68k_raw_boot_sector(profile: X68kFloppyProfile) -> bytes:
+    out = bytearray(512)
+    out[0:2] = b"\x60\x1C"
+    out[2:16] = b"diskimage-x68k"
+    out[0x12:0x14] = profile.bytes_per_sector.to_bytes(2, "big")
+    out[0x14] = profile.sectors_per_cluster
+    out[0x15] = profile.fat_count
+    out[0x16:0x18] = profile.reserved_sectors.to_bytes(2, "big")
+    out[0x18:0x1A] = profile.root_entries.to_bytes(2, "big")
+    if profile.total_sectors <= 0xFFFF:
+        out[0x1A:0x1C] = profile.total_sectors.to_bytes(2, "big")
+        out[0x1E:0x22] = (0).to_bytes(4, "big")
+    else:
+        out[0x1A:0x1C] = (0).to_bytes(2, "big")
+        out[0x1E:0x22] = profile.total_sectors.to_bytes(4, "big")
+    out[0x1C] = profile.media
+    out[0x1D] = profile.fat_sectors
+    return bytes(out)
+
+
+def _build_x68k_raw_boot_sector_from_fat_boot(raw_first_sector: bytes, media_byte: int) -> bytes:
+    out = bytearray(512)
+    out[0:2] = b"\x60\x1C"
+    out[2:16] = b"diskimage-x68k"
+
+    out[0x12:0x14] = raw_first_sector[0x0B:0x0D][::-1]
+    out[0x14] = raw_first_sector[0x0D]
+    out[0x15] = raw_first_sector[0x10]
+    out[0x16:0x18] = raw_first_sector[0x0E:0x10][::-1]
+    out[0x18:0x1A] = raw_first_sector[0x11:0x13][::-1]
+    out[0x1A:0x1C] = raw_first_sector[0x13:0x15][::-1]
+    out[0x1C] = media_byte
+    out[0x1D] = raw_first_sector[0x16]
+    out[0x1E:0x22] = raw_first_sector[0x20:0x24][::-1]
+    return bytes(out)
+
+
+def _fat_entry_size(fat_type: int) -> int:
+    return 2 if fat_type == PyFat.FAT_TYPE_FAT16 else 3
+
+
+def _initialize_empty_fat_tables(image: bytearray, fat_offset: int, fat_size_bytes: int, fat_count: int, media: int, fat_type: int) -> None:
+    if fat_type == PyFat.FAT_TYPE_FAT16:
+        init = bytes((media, 0xFF, 0xFF, 0xFF))
+    else:
+        init = bytes((media, 0xFF, 0xFF))
+
+    for fat_index in range(fat_count):
+        start = fat_offset + fat_index * fat_size_bytes
+        image[start : start + len(init)] = init
+
+
+def _create_x68k_xdf_image(image_path: Path, profile: X68kFloppyProfile) -> None:
+    root_dir_sectors = math.ceil(profile.root_entries * 32 / profile.bytes_per_sector)
+    fat_offset = profile.reserved_sectors * profile.bytes_per_sector
+    fat_size_bytes = profile.fat_sectors * profile.bytes_per_sector
+    root_offset = fat_offset + profile.fat_count * fat_size_bytes
+    data_offset = root_offset + root_dir_sectors * profile.bytes_per_sector
+
+    image = bytearray(profile.file_size)
+    image[0:512] = _build_x68k_raw_boot_sector(profile)
+    _initialize_empty_fat_tables(
+        image=image,
+        fat_offset=fat_offset,
+        fat_size_bytes=fat_size_bytes,
+        fat_count=profile.fat_count,
+        media=profile.media,
+        fat_type=profile.fat_type,
+    )
+
+    if data_offset > len(image):
+        raise ImageMountError("Invalid XDF profile layout")
+
+    image_path.write_bytes(image)
+
+
+def _create_standard_fat_image(image_path: Path, size_bytes: int, label: str) -> None:
+    image_path.touch(exist_ok=False)
+    fat = PyFat()
+    try:
+        fat.mkfs(
+            filename=str(image_path),
+            fat_type=PyFat.FAT_TYPE_FAT16,
+            size=size_bytes,
+            sector_size=512,
+            number_of_fats=2,
+            label=label,
+            media_type=0xF8,
+        )
+    finally:
+        fat.close()
+
+
+def _build_x68k_partition_table(kind: str, start_offset: int, partition_size: int) -> bytearray:
+    if kind == "hds":
+        table = bytearray(0x1000)
+        table[0x800:0x804] = b"X68K"
+        table[0x810:0x818] = b"Human68k"
+        start_sector = start_offset // 1024
+        part_sectors = partition_size // 1024
+        table[0x818:0x81C] = start_sector.to_bytes(4, "big")
+        table[0x81C:0x820] = part_sectors.to_bytes(4, "big")
+        return table
+
+    table = bytearray(0x1000)
+    table[0x400:0x404] = b"X68K"
+    table[0x410:0x418] = b"Human68k"
+    start_record = start_offset // 256
+    part_records = partition_size // 256
+    table[0x418:0x41C] = start_record.to_bytes(4, "big")
+    table[0x41C:0x420] = part_records.to_bytes(4, "big")
+    return table
+
+
+def _create_x68k_hard_disk_image(image_path: Path, image_kind: str, size_bytes: int, label: str) -> None:
+    header_size = 0x1000
+    partition_offset = 0x1000
+    partition_size = size_bytes - partition_offset
+    if partition_size < 1024 * 1024:
+        raise ImageMountError("HDF/HDS size must leave at least 1MB for the partition")
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="diskimage-x68k-"))
+    temp_fat = temp_dir / f"partition{image_path.suffix}"
+    try:
+        _create_standard_fat_image(temp_fat, partition_size, label=label)
+        fat_bytes = bytearray(temp_fat.read_bytes())
+        if len(fat_bytes) != partition_size:
+            fat_bytes = fat_bytes[:partition_size] + bytes(max(0, partition_size - len(fat_bytes)))
+
+        media_byte = 0xF7 if image_kind == "hds" else 0xF8
+        fat_bytes[0:512] = _build_x68k_raw_boot_sector_from_fat_boot(fat_bytes[0:512], media_byte)
+
+        image = _build_x68k_partition_table(image_kind, partition_offset, partition_size)
+        if len(image) < size_bytes:
+            image.extend(bytes(size_bytes - len(image)))
+        image[partition_offset : partition_offset + partition_size] = fat_bytes
+        image_path.write_bytes(image[:size_bytes])
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 class X68kFatAdapter(io.RawIOBase):
@@ -443,6 +669,36 @@ class FatImageBackend:
     def get_offset_label(self, offset: int) -> str:
         return self._offset_label_map.get(offset, f"{offset} (0x{offset:08X})")
 
+    def create_new_image(self, image_file: str | Path, image_kind: str, size_bytes: int | None = None) -> Path:
+        image_path = Path(image_file)
+        profile = NEW_IMAGE_PROFILES.get(image_kind.lower())
+        if profile is None:
+            raise ImageMountError(f"Unsupported image type: {image_kind}")
+        if image_path.exists():
+            raise ImageMountError(f"File already exists: {image_path}")
+        if not image_path.parent.exists():
+            raise ImageMountError(f"Directory not found: {image_path.parent}")
+
+        try:
+            if profile.kind == "xdf":
+                if size_bytes is not None and size_bytes != profile.size_bytes:
+                    raise ImageMountError("XDF size is fixed and cannot be changed")
+                _create_x68k_xdf_image(image_path, X68K_DEFAULT_XDF_PROFILE)
+            else:
+                target_size = size_bytes if size_bytes is not None else profile.size_bytes
+                if target_size < 1024 * 1024:
+                    raise ImageMountError("HDF/HDS size must be at least 1MB")
+                _create_x68k_hard_disk_image(image_path, profile.kind, target_size, label="X68KDISK")
+        except Exception:
+            try:
+                if image_path.exists():
+                    image_path.unlink()
+            except OSError:
+                pass
+            raise
+
+        return image_path
+
     def create_backup_now(self) -> Path:
         self._ensure_backup()
         if self._backup_path is None:
@@ -481,6 +737,10 @@ class FatImageBackend:
         self.mount_candidates = []
         self._offset_kind_map = {}
         self._offset_label_map = {}
+
+        floppy_candidate = detect_x68k_floppy_candidate(image_path)
+        if floppy_candidate is not None:
+            self.mount_candidates.append(floppy_candidate)
 
         fat_offsets = detect_fat_offsets(image_path)
         for off in fat_offsets:

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "diskimage_explorer_x68k"
 version = "0.1.0"
-description = "GUI editor for X68000 HDF/HDS disk images"
+description = "GUI editor for X68000 HDF/HDS/XDF disk images"
 requires-python = ">=3.10"
 dependencies = [
   "PySide6>=6.7",
