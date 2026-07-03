@@ -428,13 +428,14 @@ class X68kFatAdapter(io.RawIOBase):
         self._raw_media_original = self._raw_first[0x1C]
         
         # Check if this is an X68000 IPL boot sector (non-standard BPB layout)
-        is_x68k_ipl = len(raw) >= 11 and raw[3:11] == b"X68IPL30"
+        # X68000 IPL files have "X68IPL30" signature at bytes 3-11
+        self._is_x68k_ipl = len(raw) >= 11 and raw[3:11] == b"X68IPL30"
         
-        if is_x68k_ipl:
+        if self._is_x68k_ipl:
             # For X68000 IPL XDF files, derive BPB from file size and known profiles
             profile = self._detect_profile_from_file_size()
             if profile:
-                # Build a raw boot sector from the profile
+                # Build a raw boot sector from the profile for reading BPB
                 self._raw_first = bytearray(_build_x68k_raw_boot_sector(profile))
                 self._raw_media_original = profile.media
             # else: fall back to reading BPB at standard offsets
@@ -468,6 +469,11 @@ class X68kFatAdapter(io.RawIOBase):
         return [fat0 + i * fat_size_bytes for i in range(fat_count)]
 
     def _enforce_fat_media_descriptor(self) -> None:
+        # CRITICAL: For X68000 IPL files, do NOT modify any file system structures on disk.
+        # The file system is read-only from the perspective of disk writes.
+        if self._is_x68k_ipl:
+            return
+        
         if not self._fat_media_byte_offsets:
             return
 
@@ -572,8 +578,14 @@ class X68kFatAdapter(io.RawIOBase):
                 i += w
 
         self._sync_synth_to_raw()
-        self._fp.seek(self._base)
-        self._fp.write(self._raw_first)
+        
+        # CRITICAL: For X68000 IPL XDF files, DO NOT write the boot sector back to disk.
+        # The X68000 68000 machine code at bytes 0-2 and IPL signature are essential for bootability.
+        # We only use the synthetic boot sector as a PyFat interface; actual file data lives beyond byte 512.
+        if not self._is_x68k_ipl:
+            self._fp.seek(self._base)
+            self._fp.write(self._raw_first)
+        
         self._enforce_fat_media_descriptor()
         return n
 
