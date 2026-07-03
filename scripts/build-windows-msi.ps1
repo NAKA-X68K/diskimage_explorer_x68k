@@ -4,6 +4,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-NativeChecked {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+    [string]$Step = "command"
+  )
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Step failed (exit code: $LASTEXITCODE): $FilePath $($Arguments -join ' ')"
+  }
+}
+
 if ([System.Environment]::OSVersion.Platform -ne "Win32NT") {
   throw "This script must be run on Windows."
 }
@@ -62,7 +77,7 @@ if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $ToolsDir })) {
 }
 
 Write-Host "==> Ensuring WiX v4 tool"
-& $DotnetPath tool update --global wix --version "4.*"
+Invoke-NativeChecked -FilePath $DotnetPath -Arguments @("tool", "update", "--global", "wix", "--version", "4.*") -Step "dotnet tool update wix"
 
 $WixExe = Join-Path $ToolsDir "wix.exe"
 if (-not (Test-Path $WixExe)) {
@@ -84,13 +99,31 @@ $ObjDir = Join-Path $ProjectRoot "installer\windows\obj"
 New-Item -Path $ObjDir -ItemType Directory -Force | Out-Null
 $HarvestWxs = Join-Path $ObjDir "AppFiles.wxs"
 
-& $WixExe extension add WixToolset.Heat | Out-Null
+Invoke-NativeChecked -FilePath $WixExe -Arguments @("extension", "add", "WixToolset.Heat") -Step "wix extension add WixToolset.Heat"
 Write-Host "==> Harvesting dist files"
-& $WixExe heat dir "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
+$harvested = $false
+
+# Preferred for WiX v4 tool syntax.
+& $WixExe harvest directory "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
+if ($LASTEXITCODE -eq 0 -and (Test-Path $HarvestWxs)) {
+  $harvested = $true
+}
+
+# Backward compatibility for environments that still expose heat-style command shape.
+if (-not $harvested) {
+  & $WixExe heat dir "$DistDir" -nologo -dr INSTALLFOLDER -cg AppFiles -gg -srd -var var.SourceDir -out "$HarvestWxs"
+  if ($LASTEXITCODE -eq 0 -and (Test-Path $HarvestWxs)) {
+    $harvested = $true
+  }
+}
+
+if (-not $harvested) {
+  throw "Harvest step failed. WiX command syntax may differ by version. Try updating WiX (`dotnet tool update --global wix`) and rerun."
+}
 
 $MsiOut = Join-Path $ProjectRoot "dist\diskimage_explorer_x68k-windows-$Version.msi"
 Write-Host "==> Building MSI"
-& $WixExe build -nologo -d "AppVersion=$Version" -d "SourceDir=$DistDir" "$ProductWxs" "$HarvestWxs" -o "$MsiOut"
+Invoke-NativeChecked -FilePath $WixExe -Arguments @("build", "-nologo", "-d", "AppVersion=$Version", "-d", "SourceDir=$DistDir", "$ProductWxs", "$HarvestWxs", "-o", "$MsiOut") -Step "wix build"
 
 if (Test-Path $MsiOut) {
   Write-Host "MSI complete: $MsiOut"
