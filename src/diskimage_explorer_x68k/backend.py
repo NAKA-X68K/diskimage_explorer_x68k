@@ -73,22 +73,6 @@ def _join_fs_path(base: str, name: str) -> str:
     return f"{base.rstrip('/')}/{name}"
 
 
-def _normalize_path_for_x68k(path: str) -> str:
-    """Normalize path components to uppercase for X68000 compatibility.
-    
-    X68000 filesystems only support uppercase filenames. This function
-    converts each path component to uppercase while preserving the directory
-    structure.
-    
-    Example: "/path/to/MyFile.TXT" -> "/PATH/TO/MYFILE.TXT"
-    """
-    p = PurePosixPath(path)
-    parts = [part.upper() for part in p.parts if part and part != "/"]
-    if parts:
-        return "/" + "/".join(parts)
-    return "/"
-
-
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -855,17 +839,13 @@ class FatImageBackend:
         target_dir = _clean_fs_path(dest_dir)
 
         if local_path.is_dir():
-            # X68000 filesystems require uppercase directory names
-            normalized_name = _normalize_path_for_x68k(local_path.name)
-            dst = _join_fs_path(target_dir, normalized_name)
+            dst = _join_fs_path(target_dir, local_path.name)
             fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
 
-        # X68000 filesystems require uppercase filenames
-        normalized_name = _normalize_path_for_x68k(local_path.name)
-        target_file = _join_fs_path(target_dir, normalized_name)
+        target_file = _join_fs_path(target_dir, local_path.name)
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
@@ -882,16 +862,12 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        # X68000 filesystems require uppercase names
-        normalized_path = _normalize_path_for_x68k(fs_dir_path)
-        fs.makedir(_clean_fs_path(normalized_path), recreate=False)
+        fs.makedir(_clean_fs_path(fs_dir_path), recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        # X68000 filesystems require uppercase names
-        normalized_path = _normalize_path_for_x68k(fs_file_path)
-        with fs.openbin(_clean_fs_path(normalized_path), "w"):
+        with fs.openbin(_clean_fs_path(fs_file_path), "w"):
             pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:
