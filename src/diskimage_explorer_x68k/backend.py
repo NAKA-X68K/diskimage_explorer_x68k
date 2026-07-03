@@ -73,6 +73,22 @@ def _join_fs_path(base: str, name: str) -> str:
     return f"{base.rstrip('/')}/{name}"
 
 
+def _normalize_path_for_x68k(path: str) -> str:
+    """Normalize path components to uppercase for X68000 compatibility.
+    
+    X68000 filesystems only support uppercase filenames. This function
+    converts each path component to uppercase while preserving the directory
+    structure.
+    
+    Example: "/path/to/MyFile.TXT" -> "/PATH/TO/MYFILE.TXT"
+    """
+    p = PurePosixPath(path)
+    parts = [part.upper() for part in p.parts if part and part != "/"]
+    if parts:
+        return "/" + "/".join(parts)
+    return "/"
+
+
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -325,8 +341,12 @@ def _build_x68k_synthetic_boot_sector(raw_first_sector: bytes) -> bytes:
     root = int.from_bytes(raw_first_sector[0x18:0x1A], "big")
     tot16 = int.from_bytes(raw_first_sector[0x1A:0x1C], "big")
     media = raw_first_sector[0x1C]
-    # pyfatfs rejects 0xF7 although X68000 SCSI images commonly use it.
-    media_for_mount = 0xF8 if media == 0xF7 else media
+    # pyfatfs rejects 0xF7 and X68000-specific values (0xFA-0xFE) although X68000 SCSI/floppy images use them.
+    # Use 0xF8 (standard hard disk) as a compatible fallback.
+    if media in (0xF7, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE):
+        media_for_mount = 0xF8
+    else:
+        media_for_mount = media
     fatsz = raw_first_sector[0x1D]
     tot32_be = int.from_bytes(raw_first_sector[0x1E:0x22], "big")
     total = tot16 if tot16 != 0 else tot32_be
@@ -858,12 +878,16 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        fs.makedir(_clean_fs_path(fs_dir_path), recreate=False)
+        # X68000 filesystems require uppercase names
+        normalized_path = _normalize_path_for_x68k(fs_dir_path)
+        fs.makedir(_clean_fs_path(normalized_path), recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        with fs.openbin(_clean_fs_path(fs_file_path), "w"):
+        # X68000 filesystems require uppercase names
+        normalized_path = _normalize_path_for_x68k(fs_file_path)
+        with fs.openbin(_clean_fs_path(normalized_path), "w"):
             pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:
