@@ -142,6 +142,11 @@ Windows での最短手順:
 5. `.\scripts\build-windows-msi.ps1 -SkipBuild`
 6. `dist\diskimage_explorer_x68k-windows-<version>.msi` を配布
 
+MSI インストール時のショートカット:
+
+- デスクトップに `diskimage_explorer_x68k` のショートカットを作成します。
+- アンインストール時にショートカットは削除されます。
+
 インストール権限について:
 
 - この MSI は `perUser` インストールです（管理者昇格なし）。
