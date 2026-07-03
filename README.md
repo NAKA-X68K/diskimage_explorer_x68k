@@ -110,7 +110,7 @@ Windows (PowerShell):
 
 ## 再配布について
 本ソフトウェアの再配布は自由ですが、以下の情報を明記してください。
-- オリジナルソースのURL: [ここにあなたのGitHubリポジトリURLを記載]
+- オリジナルソースのURL: https://github.com/NAKA-X68K/diskimage_explorer_x68k
 
 ## バグ報告・お問い合わせ
 バグや不具合を見つけた場合は、以下の連絡先までお知らせください。
