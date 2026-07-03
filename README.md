@@ -146,7 +146,8 @@ MSI ビルドで `wix.exe : error WIX0118: Additional argument ... was unexpecte
 
 1. `.\scripts\setup-windows-msi-tools.ps1` を再実行して WiX を更新する
 2. `.\scripts\build-windows-msi.ps1 -SkipBuild` を再実行する
-3. それでも失敗する場合は、`wix --version` とエラーログを共有する
+3. このスクリプトは `installer\windows\obj\AppFiles.wxs` を自動生成して `wix build` するため、`harvest/heat` コマンドは不要です
+4. それでも失敗する場合は、`wix --version` とエラーログを共有する
 
 注意:
 
