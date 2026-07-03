@@ -46,21 +46,12 @@ python -m diskimage_explorer_x68k.main
 ## 使い方
 
 1. `Backup on Open` を必要に応じて ON/OFF
-2. `VFAT (TwentyOne)` を必要に応じて ON/OFF
-3. `Mount` で既存イメージを開く
-4. `Offset` でパーティション/候補を切り替える
-5. 必要なら `Backup Now` で明示バックアップを作成
-6. ツリーへローカルファイル/フォルダを D&D
-7. ファイル上に単体ファイルをドロップすると置換
-8. `New File`, `New Folder`, `Delete` で編集
-
-### VFAT (TwentyOne) モード
-
-- `VFAT (TwentyOne)` が OFF の場合:
-	- X68000 マウントでは LFN を作らないように 8.3 短名へ正規化します（互換性優先）。
-- `VFAT (TwentyOne)` が ON の場合:
-	- 長い名前・小文字・マルチドットを含む名前をそのまま扱います（LFN/VFAT）。
-	- X68000 側で `VTwentyOne.x` など VFAT 対応ドライバを導入している環境向けです。
+2. `Mount` で既存イメージを開く
+3. `Offset` でパーティション/候補を切り替える
+4. 必要なら `Backup Now` で明示バックアップを作成
+5. ツリーへローカルファイル/フォルダを D&D
+6. ファイル上に単体ファイルをドロップすると置換
+7. `New File`, `New Folder`, `Delete` で編集
 
 ## 安全対策
 

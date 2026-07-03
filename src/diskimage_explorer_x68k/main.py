@@ -250,10 +250,6 @@ class MainWindow(QMainWindow):
         self.btn_backup_now = QPushButton("Backup Now")
         self.chk_backup_on_open = QCheckBox("Backup on Open")
         self.chk_backup_on_open.setChecked(True)
-        self.chk_vfat_twentyone = QCheckBox("VFAT (TwentyOne)")
-        vfat_enabled = self._settings.value("x68k_vfat_twentyone", False, type=bool)
-        self.chk_vfat_twentyone.setChecked(bool(vfat_enabled))
-        self.backend.set_x68k_vfat_enabled(bool(vfat_enabled))
 
         self.offset_combo = QComboBox()
         self.offset_combo.setMinimumWidth(250)
@@ -267,7 +263,6 @@ class MainWindow(QMainWindow):
         top.addWidget(self.btn_delete)
         top.addWidget(self.btn_backup_now)
         top.addWidget(self.chk_backup_on_open)
-        top.addWidget(self.chk_vfat_twentyone)
         top.addWidget(QLabel("Offset:"))
         top.addWidget(self.offset_combo)
         top.addStretch(1)
@@ -307,7 +302,6 @@ class MainWindow(QMainWindow):
         self.btn_new_dir.clicked.connect(self.create_new_dir)
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_backup_now.clicked.connect(self.backup_now)
-        self.chk_vfat_twentyone.toggled.connect(self._on_vfat_mode_toggled)
         self.offset_combo.currentIndexChanged.connect(self.on_offset_changed)
         self.tree.localPathsDropped.connect(self.on_local_paths_dropped)
         self.tree.customContextMenuRequested.connect(self._show_tree_context_menu)
@@ -370,15 +364,8 @@ class MainWindow(QMainWindow):
         self.btn_delete.setEnabled(enabled)
         self.btn_backup_now.setEnabled(enabled)
         self.chk_backup_on_open.setEnabled(enabled)
-        self.chk_vfat_twentyone.setEnabled(enabled)
         self.offset_combo.setEnabled(enabled)
         self.tree.setEnabled(enabled)
-
-    def _on_vfat_mode_toggled(self, enabled: bool) -> None:
-        self.backend.set_x68k_vfat_enabled(enabled)
-        self._settings.setValue("x68k_vfat_twentyone", bool(enabled))
-        mode = "ON" if enabled else "OFF"
-        self.statusBar().showMessage(f"VFAT (TwentyOne) mode: {mode}")
 
     def _is_mounted(self) -> bool:
         return self.backend.fs is not None

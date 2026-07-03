@@ -73,32 +73,6 @@ def _join_fs_path(base: str, name: str) -> str:
     return f"{base.rstrip('/')}/{name}"
 
 
-def _normalize_x68k_83_path(path: str) -> str:
-    p = PurePosixPath(_clean_fs_path(path))
-    normalized: list[str] = []
-    for part in p.parts:
-        if part in ("", "/"):
-            continue
-        if part in (".", ".."):
-            raise ImageMountError("Relative path components are not supported")
-
-        if "." in part:
-            stem, ext = part.rsplit(".", 1)
-        else:
-            stem, ext = part, ""
-
-        if not stem:
-            raise ImageMountError(f"Invalid file name for X68000: {part}")
-        if len(stem) > 8 or len(ext) > 3:
-            raise ImageMountError(f"X68000 file names must be 8.3 format: {part}")
-
-        stem_u = stem.upper()
-        ext_u = ext.upper()
-        normalized.append(stem_u if not ext_u else f"{stem_u}.{ext_u}")
-
-    return "/" + "/".join(normalized)
-
-
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -583,18 +557,8 @@ class FatImageBackend:
         self.fs: PyFatFS | None = None
         self._adapter: X68kFatAdapter | None = None
         self._mount_kind: str = "fat"
-        self._x68k_vfat_enabled: bool = False
         self._backup_path: Path | None = None
         self._backup_done = False
-
-    def set_x68k_vfat_enabled(self, enabled: bool) -> None:
-        self._x68k_vfat_enabled = bool(enabled)
-
-    def _normalize_target_path_for_mode(self, path: str) -> str:
-        target = _clean_fs_path(path)
-        if self._mount_kind == "x68k-be-bpb" and not self._x68k_vfat_enabled:
-            target = _normalize_x68k_83_path(target)
-        return target
 
     @property
     def backup_path(self) -> Path | None:
@@ -803,16 +767,16 @@ class FatImageBackend:
     def import_local_path(self, local_path: Path, dest_dir: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        target_dir = self._normalize_target_path_for_mode(dest_dir)
+        target_dir = _clean_fs_path(dest_dir)
 
         if local_path.is_dir():
-            dst = self._normalize_target_path_for_mode(_join_fs_path(target_dir, local_path.name))
+            dst = _join_fs_path(target_dir, local_path.name)
             fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
 
-        target_file = self._normalize_target_path_for_mode(_join_fs_path(target_dir, local_path.name))
+        target_file = _join_fs_path(target_dir, local_path.name)
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
 
@@ -829,14 +793,12 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        target = self._normalize_target_path_for_mode(fs_dir_path)
-        fs.makedir(target, recreate=False)
+        fs.makedir(_clean_fs_path(fs_dir_path), recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        target = self._normalize_target_path_for_mode(fs_file_path)
-        with fs.openbin(target, "w"):
+        with fs.openbin(_clean_fs_path(fs_file_path), "w"):
             pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:
