@@ -43,6 +43,17 @@ $env:PYTHONPATH = "src"
 python -m diskimage_explorer_x68k.main
 ```
 
+## pyproject.toml について
+
+`pyproject.toml` は、このプロジェクトの Python パッケージ設定ファイルです。
+
+- ビルド方式（setuptools）
+- プロジェクト名・バージョン・Python 要件
+- 依存ライブラリ（PySide6 / pyfatfs など）
+- 実行コマンド `diskimage_explorer_x68k` のエントリポイント
+
+`requirements.txt` は主に開発時の依存導入用、`pyproject.toml` は配布・実行定義を含む中核設定、という使い分けです。
+
 ## 使い方
 
 1. `Backup on Open` を必要に応じて ON/OFF
