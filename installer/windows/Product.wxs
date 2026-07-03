@@ -10,7 +10,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <StandardDirectory Id="ProgramFilesFolder">
+    <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="diskimage_explorer_x68k" />
     </StandardDirectory>
 
