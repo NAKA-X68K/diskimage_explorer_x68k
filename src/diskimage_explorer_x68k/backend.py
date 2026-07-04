@@ -10,6 +10,45 @@ from typing import Iterable
 from pyfatfs.PyFat import PyFat
 from pyfatfs.PyFatFS import PyFatFS, PyFatBytesIOFS
 
+# Custom PyFatBytesIOFS wrapper to handle lowercase filenames
+class PyFatBytesIOFSFixed(PyFatBytesIOFS):
+    """PyFatBytesIOFS with lowercase filename handling.
+    
+    PyFatFS generates LFN (Long File Name) entries for lowercase filenames,
+    but these LFN entries may have incorrect padding that breaks X68000's
+    FAT parser. This wrapper normalizes lowercase filenames to uppercase
+    on file creation to avoid LFN generation.
+    
+    See: https://github.com/pyke369/pyfatfs/issues/... (LFN padding issue)
+    """
+    
+    def openbin(self, path, mode='r', buffering=-1, **kwargs):
+        """Open a file, normalizing lowercase filenames to uppercase.
+        
+        If the filename contains lowercase characters and mode is write mode,
+        the filename is converted to uppercase to prevent LFN generation.
+        """
+        # Only normalize on write operations
+        if 'w' in mode or 'a' in mode or '+' in mode:
+            # Check if path contains lowercase letters
+            path_obj = PurePosixPath(path)
+            name = path_obj.name
+            
+            # If filename contains lowercase, convert to uppercase
+            if name and any(c.islower() for c in name):
+                # Split name and extension
+                if '.' in name:
+                    parts = name.rsplit('.', 1)
+                    name_upper = parts[0].upper() + '.' + parts[1].upper()
+                else:
+                    name_upper = name.upper()
+                
+                # Reconstruct path with uppercase name
+                path = str(path_obj.parent / name_upper)
+        
+        # Call parent's openbin with normalized path
+        return super().openbin(path, mode, buffering, **kwargs)
+
 # Import XDF filesystem for native X68000 XDF support
 try:
     from .xdf_filesystem import XDFFileSystem
@@ -816,7 +855,7 @@ class FatImageBackend:
             self.fs = XDFFileSystem(image_path, partition=partition_num)
         elif kind == "x68k-be-bpb":
             self._adapter = X68kFatAdapter(image_path, offset)
-            self.fs = PyFatBytesIOFS(
+            self.fs = PyFatBytesIOFSFixed(
                 fp=self._adapter,
                 offset=0,
                 preserve_case=False,
@@ -986,10 +1025,21 @@ class FatImageBackend:
         dpath = _clean_fs_path(dir_path)
         names = fs.listdir(dpath)
         out: list[ImageEntry] = []
+        
+        # Track seen names (case-insensitive) to filter out LFN/SFN duplicates
+        # PyFatFS may return both LFN and SFN for the same file
+        seen_upper = set()
+        
         for name in sorted(names, key=str.lower):
             # Skip . and .. entries (FAT directory self/parent references)
             if name in (".", ".."):
                 continue
+            
+            # Filter out LFN/SFN duplicates (keep first occurrence, which is usually LFN)
+            upper_name = name.upper()
+            if upper_name in seen_upper:
+                continue
+            seen_upper.add(upper_name)
             
             child = _join_fs_path(dpath, name)
             
