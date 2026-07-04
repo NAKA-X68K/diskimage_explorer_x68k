@@ -1,43 +1,51 @@
-"""QColumnView ベースのカラムビュー実装。
+"""複数 QListView を水平配置したカラムビュー実装。
 
-X68000 ディスク イメージ ブラウザ用に ドラッグ&ドロップ 対応のカラムビューを提供。
+X68000 ディスク イメージ ブラウザ用に、シンプルで確実なカラムビューを提供。
+各列が階層レベルを表し、選択変更で次の列が更新される。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional
-from datetime import datetime
+from typing import Optional
 
-from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QSize
+from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex
 from PySide6.QtGui import QDrag, QColor
-from PySide6.QtWidgets import QColumnView, QListView, QAbstractItemView, QFileIconProvider, QStyle
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QListView, QAbstractItemView
+)
 
 
 class DiskFileInfo:
     """ディスク ファイル情報。"""
     
-    def __init__(self, name: str, is_dir: bool, size: int, modified: datetime):
+    def __init__(self, name: str, is_dir: bool, size: int, modified: str, path: str = ""):
         self.name = name
         self.is_dir = is_dir
         self.size = size
-        self.modified = modified
+        self.modified = modified  # ISO format string: "2024-01-15 10:30:00"
+        self.path = path
     
     def size_str(self) -> str:
         """サイズを人間が読みやすい文字列に変換。"""
         if self.is_dir:
-            return ""
+            return "<DIR>"
         
+        size = float(self.size)
         for unit in ['B', 'KB', 'MB', 'GB']:
-            if self.size < 1024:
-                return f"{self.size:.0f}{unit}"
-            self.size /= 1024
+            if size < 1024:
+                return f"{size:.0f}{unit}"
+            size /= 1024
         
-        return f"{self.size:.0f}TB"
+        return f"{size:.0f}TB"
     
     def date_str(self) -> str:
         """日付を文字列に変換。"""
-        return self.modified.strftime("%Y-%m-%d %H:%M")
+        # modified は既に ISO format string
+        if not self.modified:
+            return ""
+        # "2024-01-15 10:30:00" -> "2024-01-15 10:30"
+        return self.modified[:16]
 
 
 class ColumnViewModel(QAbstractListModel):
@@ -63,6 +71,7 @@ class ColumnViewModel(QAbstractListModel):
                     is_dir=entry.is_dir,
                     size=entry.size,
                     modified=entry.modified,
+                    path=entry.path,
                 ))
         except Exception:
             pass
@@ -83,91 +92,54 @@ class ColumnViewModel(QAbstractListModel):
         item = self.items[index.row()]
         
         if role == Qt.DisplayRole:
-            return item.name
-        elif role == Qt.DecorationRole:
-            # アイコン（フォルダまたはファイル）
-            style = self.backend._app.style() if hasattr(self.backend, '_app') else None
+            # 表示テキスト：フォルダなら末尾に「/」をつける
             if item.is_dir:
-                return style.standardIcon(QStyle.SP_DirIcon) if style else None
-            else:
-                return style.standardIcon(QStyle.SP_FileIcon) if style else None
+                return f"{item.name}/"
+            return item.name
+        
         elif role == Qt.UserRole:
-            # ファイル情報用カスタムロール
+            # カスタム情報
             return {
                 'name': item.name,
                 'is_dir': item.is_dir,
                 'size': item.size_str(),
                 'date': item.date_str(),
+                'path': item.path,
             }
+        
+        elif role == Qt.ForegroundRole:
+            # フォルダは青色
+            if item.is_dir:
+                return QColor(0, 0, 255)
         
         return None
     
-    def is_dir(self, index: QModelIndex) -> bool:
-        """ディレクトリかどうか。"""
+    def get_item_path(self, index: QModelIndex) -> Optional[str]:
+        """指定インデックスのパスを取得。"""
+        if not index.isValid():
+            return None
+        return self.items[index.row()].path
+    
+    def get_item_is_dir(self, index: QModelIndex) -> bool:
+        """指定インデックスがディレクトリかどうか。"""
         if not index.isValid():
             return False
         return self.items[index.row()].is_dir
 
 
-class CustomColumnView(QColumnView):
-    """ドラッグ&ドロップ 対応のカラムビュー。"""
+class ColumnListView(QListView):
+    """ドラッグ&ドロップ対応のカラム用リストビュー。"""
     
-    pathChanged = Signal(str)
-    filesDropped = Signal(str, list)  # path, local_file_paths
-    
-    def __init__(self, backend):
-        super().__init__()
-        self.backend = backend
-        self.current_path = "/"
-        self.models: dict[str, ColumnViewModel] = {}
-        
-        # UI 設定
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.backend = None
+        self.parent_view = None
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.setAlternatingRowColors(True)
         self.setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)
-        
-        # シグナル接続
-        self.clicked.connect(self._on_item_clicked)
-    
-    def set_backend(self, backend) -> None:
-        """Backend を設定。"""
-        self.backend = backend
-        self.clear()
-        self.current_path = "/"
-        self.models = {}
-    
-    def navigate_to(self, path: str) -> None:
-        """パスに移動。"""
-        self.current_path = path
-        self._update_columns()
-        self.pathChanged.emit(path)
-    
-    def _update_columns(self) -> None:
-        """カラムを更新。"""
-        # すべてのモデルをクリア
-        self.setModel(None)
-        self.models = {}
-        
-        # ルートモデルを作成
-        root_model = ColumnViewModel(self.backend, "/")
-        self.models["/"] = root_model
-        self.setModel(root_model)
-    
-    def _on_item_clicked(self, index) -> None:
-        """アイテムクリック時。"""
-        if not index.isValid():
-            return
-        
-        model = self.model()
-        if not isinstance(model, ColumnViewModel):
-            return
-        
-        if model.is_dir(index):
-            item_name = model.data(index, Qt.DisplayRole)
-            new_path = f"{self.current_path.rstrip('/')}/{item_name}"
-            self.navigate_to(new_path)
+        self.setMinimumWidth(200)
     
     def dragEnterEvent(self, event) -> None:
         """ドラッグ開始時。"""
@@ -189,43 +161,37 @@ class CustomColumnView(QColumnView):
             super().dropEvent(event)
             return
         
-        local_paths = []
-        for url in event.mimeData().urls():
-            if url.isLocalFile():
-                local_paths.append(url.toLocalFile())
-        
-        if local_paths:
-            self.filesDropped.emit(self.current_path, local_paths)
+        # 親ウィジェット（CustomColumnView）に処理を委譲
+        if self.parent_view and hasattr(self.parent_view, 'on_drop_files'):
+            local_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+            if local_paths:
+                self.parent_view.on_drop_files(local_paths)
     
     def startDrag(self, supported_actions) -> None:
         """ドラッグ開始。"""
-        # 選択されたアイテムのファイルパスを取得
         selection_model = self.selectionModel()
         if not selection_model or not selection_model.hasSelection():
             return
         
         model = self.model()
-        if not isinstance(model, ColumnViewModel):
+        if not model or not self.backend:
             return
         
-        # 選択されたアイテムのパスを構築
         urls = []
         for index in selection_model.selectedIndexes():
             if index.isValid():
-                item_name = model.data(index, Qt.DisplayRole)
-                full_path = f"{self.current_path.rstrip('/')}/{item_name}"
-                
-                # 一時ファイルとしてエクスポート
-                try:
-                    import tempfile
-                    temp_dir = Path(tempfile.gettempdir()) / "xdf_drag"
-                    temp_dir.mkdir(exist_ok=True)
-                    
-                    local_path = temp_dir / item_name
-                    self.backend.export_path_to_local(full_path, local_path)
-                    urls.append(QUrl.fromLocalFile(str(local_path)))
-                except Exception:
-                    pass
+                data = model.data(index, Qt.UserRole)
+                if data:
+                    try:
+                        import tempfile
+                        temp_dir = Path(tempfile.gettempdir()) / "xdf_drag"
+                        temp_dir.mkdir(exist_ok=True)
+                        
+                        local_path = temp_dir / data['name']
+                        self.backend.export_path_to_local(data['path'], local_path)
+                        urls.append(QUrl.fromLocalFile(str(local_path)))
+                    except Exception:
+                        pass
         
         if urls:
             mime = QMimeData()
@@ -234,3 +200,124 @@ class CustomColumnView(QColumnView):
             drag = QDrag(self)
             drag.setMimeData(mime)
             drag.exec(Qt.CopyAction)
+
+
+class CustomColumnView(QWidget):
+    """複数 QListView を水平配置したカラムビュー。"""
+    
+    pathChanged = Signal(str)
+    filesDropped = Signal(str, list)  # path, local_file_paths
+    
+    def __init__(self, backend=None, parent=None):
+        super().__init__(parent)
+        self.backend = backend
+        self.current_path = "/"
+        self.models: dict[int, ColumnViewModel] = {}  # depth -> model
+        self.views: list[ColumnListView] = []  # depth 順のビューリスト
+        
+        # UI 設定
+        self.layout = QHBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        self.setLayout(self.layout)
+        
+        if backend:
+            self._init_columns()
+    
+    def _init_columns(self) -> None:
+        """初期カラムを作成。"""
+        if not self.backend:
+            return
+        
+        # ルートカラムを作成
+        self._add_column(0, "/")
+    
+    def _add_column(self, depth: int, path: str) -> None:
+        """指定深さにカラムを追加。"""
+        # 既存カラムをクリア
+        while len(self.views) > depth:
+            view = self.views.pop()
+            self.layout.removeWidget(view)
+            view.deleteLater()
+        
+        while len(self.models) > depth:
+            self.models.pop(len(self.models) - 1, None)
+        
+        # 新しいモデルとビューを作成
+        model = ColumnViewModel(self.backend, path)
+        self.models[depth] = model
+        
+        view = ColumnListView(self)
+        view.backend = self.backend
+        view.parent_view = self
+        view.setModel(model)
+        view.clicked.connect(lambda idx: self._on_column_clicked(depth, idx))
+        
+        self.views.append(view)
+        self.layout.addWidget(view)
+    
+    def _on_column_clicked(self, depth: int, index) -> None:
+        """カラムのアイテムがクリックされた。"""
+        model = self.models.get(depth)
+        if not model or not index.isValid():
+            return
+        
+        item_path = model.get_item_path(index)
+        is_dir = model.get_item_is_dir(index)
+        
+        if is_dir and item_path:
+            # ディレクトリの場合、次のカラムを表示
+            self.current_path = item_path
+            self._add_column(depth + 1, item_path)
+            self.pathChanged.emit(item_path)
+        elif item_path:
+            # ファイルの場合、親パスで pathChanged
+            self.current_path = item_path
+            self.pathChanged.emit(item_path)
+    
+    def set_backend(self, backend) -> None:
+        """Backend を設定。"""
+        self.backend = backend
+        
+        # すべてのビューをクリア
+        for view in self.views:
+            self.layout.removeWidget(view)
+            view.deleteLater()
+        
+        self.views = []
+        self.models = {}
+        self.current_path = "/"
+        
+        if backend:
+            self._init_columns()
+    
+    def navigate_to(self, path: str) -> None:
+        """パスに移動。"""
+        if not self.backend:
+            return
+        
+        self.current_path = path
+        
+        # パスを分割
+        parts = path.strip("/").split("/") if path != "/" else []
+        
+        # 必要なカラムを作成
+        for depth in range(len(parts) + 1):
+            if depth == 0:
+                current_path = "/"
+            else:
+                current_path = "/" + "/".join(parts[:depth])
+            
+            if depth not in self.models:
+                self._add_column(depth, current_path)
+        
+        self.pathChanged.emit(path)
+    
+    def on_drop_files(self, local_paths: list[str]) -> None:
+        """ファイルがドロップされた。"""
+        self.filesDropped.emit(self.current_path, local_paths)
+    
+    def refresh(self) -> None:
+        """すべてのカラムを再読み込み。"""
+        for model in self.models.values():
+            model._load_items()
