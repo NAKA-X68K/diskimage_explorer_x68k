@@ -31,9 +31,11 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QTabWidget,
 )
 
 from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn
+from .column_view import CustomColumnView
 
 
 def _join(base: str, name: str) -> str:
@@ -269,6 +271,7 @@ class MainWindow(QMainWindow):
 
         outer.addWidget(self.lbl_info)
 
+        # ツリービュー設定
         self.tree = DropTreeWidget()
         self.tree.set_external_url_provider(self._build_external_drag_urls)
         self.tree.setHeaderLabels(["Name", "Type", "Size", "Modified"])
@@ -285,7 +288,15 @@ class MainWindow(QMainWindow):
         self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
-        outer.addWidget(self.tree)
+        
+        # カラムビュー設定
+        self.column_view = CustomColumnView(None)
+        
+        # タブウィジェットで両方を表示
+        self.view_tabs = QTabWidget()
+        self.view_tabs.addTab(self.tree, "Tree View")
+        self.view_tabs.addTab(self.column_view, "Column View")
+        outer.addWidget(self.view_tabs)
 
         self._busy_overlay = BusyOverlay(root)
         self._busy_overlay.setGeometry(root.rect())
