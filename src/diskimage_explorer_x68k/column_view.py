@@ -445,3 +445,49 @@ Modified: {item.date_str()}
         item = self._get_selected_file_item(list_view)
         if item:
             self.fileEditRequested.emit(item.path, item.name)
+
+    def get_target_dir(self) -> str:
+        """New File/New Folder の作成先ディレクトリを返す。
+
+        - ディレクトリが選択されている場合 → そのディレクトリ内
+        - ファイルが選択されている場合 → そのファイルと同じ階層（ファイルを含むカラムのディレクトリ）
+        - 何も選択されていない場合 → 最後のカラムのディレクトリ
+        """
+        if not self.views or not self.models:
+            return "/"
+
+        # 後ろのカラムから選択を探す
+        for depth in range(len(self.views) - 1, -1, -1):
+            view = self.views[depth]
+            sel = view.selectionModel()
+            if sel and sel.hasSelection():
+                model = view.model()
+                indices = sel.selectedIndexes()
+                if indices and indices[0].isValid():
+                    idx = indices[0]
+                    if idx.row() < len(model.items):
+                        item = model.items[idx.row()]
+                        if item.is_dir:
+                            return item.path  # 選択されたディレクトリ内
+                        else:
+                            return model.path  # ファイルと同じ階層
+
+        # 何も選択されていない → 最後のカラムのディレクトリ
+        last_depth = max(self.models.keys())
+        return self.models[last_depth].path
+
+    def get_selected_paths(self) -> list[str]:
+        """削除対象のパスを返す（全カラムの選択を収集）。"""
+        paths = []
+        seen: set[str] = set()
+        for view in self.views:
+            sel = view.selectionModel()
+            if sel and sel.hasSelection():
+                model = view.model()
+                for idx in sel.selectedIndexes():
+                    if idx.isValid() and idx.row() < len(model.items):
+                        item = model.items[idx.row()]
+                        if item.path not in seen:
+                            paths.append(item.path)
+                            seen.add(item.path)
+        return paths

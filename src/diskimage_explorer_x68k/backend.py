@@ -1046,6 +1046,10 @@ class FatImageBackend:
             else:
                 fs.remove(cp)
 
+        # 変更をディスクに保存
+        if hasattr(fs, 'flush'):
+            fs.flush()
+
     def read_file_bytes(self, fs_file_path: str) -> bytes:
         fs = self._require_fs()
         with fs.openbin(_clean_fs_path(fs_file_path), "r") as fp:

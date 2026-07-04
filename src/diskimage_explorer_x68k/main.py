@@ -1127,27 +1127,28 @@ class MainWindow(QMainWindow):
 
         self._run_busy_task("Importing files...", work, on_success, "Drop failed")
 
+    def _is_column_view_active(self) -> bool:
+        """Column View タブが表示中か。"""
+        return self.view_tabs.currentWidget() is self.column_view
+
     def create_new_file(self) -> None:
         if self.backend.fs is None:
             return
 
-        target_dir = self._selected_target_dir()
+        if self._is_column_view_active():
+            target_dir = self.column_view.get_target_dir()
+        else:
+            target_dir = self._selected_target_dir()
+
         name, ok = QInputDialog.getText(self, "New File", "File name:")
         if not ok or not name.strip():
             return
 
         try:
-            # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
-            # SFN conversion: avoids white window error in XEiJ
             sfn_name = _to_fat_sfn(name.strip())
             self.backend.create_empty_file(_join(target_dir, sfn_name))
             self.refresh_tree()
-            
-            # Show message with converted filename
-            if sfn_name != name.strip():
-                msg = f"File created as: {sfn_name}"
-            else:
-                msg = "File created"
+            msg = f"File created as: {sfn_name}" if sfn_name != name.strip() else "File created"
             self.statusBar().showMessage(msg)
         except Exception as exc:
             QMessageBox.critical(self, "Create file failed", str(exc))
@@ -1156,23 +1157,20 @@ class MainWindow(QMainWindow):
         if self.backend.fs is None:
             return
 
-        target_dir = self._selected_target_dir()
+        if self._is_column_view_active():
+            target_dir = self.column_view.get_target_dir()
+        else:
+            target_dir = self._selected_target_dir()
+
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if not ok or not name.strip():
             return
 
         try:
-            # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
-            # SFN conversion: avoids white window error in XEiJ
             sfn_name = _to_fat_sfn(name.strip())
             self.backend.create_dir(_join(target_dir, sfn_name))
             self.refresh_tree()
-            
-            # Show message with converted filename
-            if sfn_name != name.strip():
-                msg = f"Folder created as: {sfn_name}"
-            else:
-                msg = "Folder created"
+            msg = f"Folder created as: {sfn_name}" if sfn_name != name.strip() else "Folder created"
             self.statusBar().showMessage(msg)
         except Exception as exc:
             QMessageBox.critical(self, "Create folder failed", str(exc))
@@ -1181,12 +1179,19 @@ class MainWindow(QMainWindow):
         if self.backend.fs is None:
             return
 
-        items = self._selected_items()
-        if not items:
+        if self._is_column_view_active():
+            paths = self.column_view.get_selected_paths()
+            names = ", ".join(p.split("/")[-1] for p in paths)
+        else:
+            items = self._selected_items()
+            if not items:
+                return
+            paths = [i.data(0, Qt.UserRole) for i in items]
+            names = ", ".join(i.text(0) for i in items)
+
+        if not paths:
             return
 
-        paths = [i.data(0, Qt.UserRole) for i in items]
-        names = ", ".join(i.text(0) for i in items)
         answer = QMessageBox.question(
             self,
             "Confirm delete",
