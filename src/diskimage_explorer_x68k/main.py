@@ -34,8 +34,15 @@ from PySide6.QtWidgets import (
     QTabWidget,
 )
 
-from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn
+from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn, HAS_TWENTYONE_SUPPORT
 from .column_view import CustomColumnView
+
+# TwentyOne support imports (conditional)
+if HAS_TWENTYONE_SUPPORT:
+    try:
+        from .twentyone_dialog import TwentyOneFileDialog, TwentyOneFileContentDialog
+    except ImportError:
+        HAS_TWENTYONE_SUPPORT = False
 
 
 def _join(base: str, name: str) -> str:
@@ -535,19 +542,42 @@ class MainWindow(QMainWindow):
 
         fs_path = item.data(0, Qt.UserRole)
         is_dir = bool(item.data(0, Qt.UserRole + 1))
-        if is_dir:
-            return
-
+        item_name = item.text(0)
+        
         self.tree.setCurrentItem(item)
 
         menu = QMenu(self)
-        act_view = menu.addAction("View File")
-        act_edit = menu.addAction("Edit File (text only)")
-        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
-        if chosen == act_view:
-            self._view_file(fs_path, item.text(0))
-        elif chosen == act_edit:
-            self._edit_file(fs_path, item.text(0))
+        
+        if is_dir:
+            # ディレクトリ用メニュー
+            if HAS_TWENTYONE_SUPPORT:
+                act_create_21 = menu.addAction("Create TwentyOne File (21 chars)")
+                menu.addSeparator()
+            act_create = menu.addAction("Create File...")
+            
+            chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+            
+            if HAS_TWENTYONE_SUPPORT and chosen == act_create_21:
+                self._create_twentyone_file(fs_path)
+            elif chosen == act_create:
+                self._create_file(fs_path)
+        else:
+            # ファイル用メニュー
+            act_view = menu.addAction("View File")
+            act_edit = menu.addAction("Edit File (text only)")
+            
+            if HAS_TWENTYONE_SUPPORT:
+                menu.addSeparator()
+                act_edit_21 = menu.addAction("Edit TwentyOne Name")
+            
+            chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+            
+            if chosen == act_view:
+                self._view_file(fs_path, item_name)
+            elif chosen == act_edit:
+                self._edit_file(fs_path, item_name)
+            elif HAS_TWENTYONE_SUPPORT and chosen == act_edit_21:
+                self._edit_twentyone_name(fs_path, item_name)
 
     def _on_tree_selection_changed(self) -> None:
         """ツリーの選択が変更された。"""
@@ -893,6 +923,76 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
 
         dlg.exec()
+
+    def _create_file(self, parent_path: str) -> None:
+        """Create a new file in the specified directory."""
+        if self.backend.fs is None:
+            return
+        
+        # Simple file creation dialog
+        filename, ok = QInputDialog.getText(
+            self, 
+            "Create File", 
+            "File name (8.3 format):",
+            text="newfile.txt"
+        )
+        
+        if not ok or not filename:
+            return
+        
+        # Create empty file
+        try:
+            self.backend.write_file_bytes(f"{parent_path}/{filename}", b"")
+            self.refresh_tree()
+            self._set_info_label()
+            QMessageBox.information(self, "Create File", f"File created: {filename}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Create File failed", str(exc))
+
+    def _create_twentyone_file(self, parent_path: str) -> None:
+        """Create a new TwentyOne file (21-character name) in the specified directory."""
+        if self.backend.fs is None:
+            return
+        
+        if not HAS_TWENTYONE_SUPPORT:
+            QMessageBox.warning(self, "TwentyOne Support", "TwentyOne support is not available")
+            return
+        
+        # Show TwentyOne file creation dialog
+        dlg = TwentyOneFileDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        
+        filename = dlg.get_filename()
+        
+        # Show content editor dialog
+        content_dlg = TwentyOneFileContentDialog(self)
+        if content_dlg.exec() != QDialog.Accepted:
+            return
+        
+        content = content_dlg.get_content()
+        
+        # Write file to image
+        try:
+            self.backend.write_file_twentyone(parent_path, filename, content.encode('utf-8'))
+            self.refresh_tree()
+            self._set_info_label()
+            QMessageBox.information(self, "Create TwentyOne File", f"File created: {filename}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Create TwentyOne File failed", str(exc))
+
+    def _edit_twentyone_name(self, fs_path: str, current_name: str) -> None:
+        """Edit TwentyOne filename for an existing file."""
+        if self.backend.fs is None:
+            return
+        
+        if not HAS_TWENTYONE_SUPPORT:
+            QMessageBox.warning(self, "TwentyOne Support", "TwentyOne support is not available")
+            return
+        
+        # Show info about current name
+        info_text = f"Current name: {current_name}\n\nNote: TwentyOne name editing requires FAT entry modification.\nThis is currently a view-only feature."
+        QMessageBox.information(self, "TwentyOne Name Info", info_text)
 
     def _selected_target_dir(self) -> str:
         path = self._selected_fs_path()
