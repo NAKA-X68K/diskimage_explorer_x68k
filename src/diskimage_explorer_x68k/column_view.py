@@ -140,6 +140,29 @@ class ColumnListView(QListView):
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)
         self.setMinimumWidth(200)
+        self._set_inactive_style()
+    
+    def _set_active_style(self) -> None:
+        """アクティブカラムのスタイル。"""
+        self.setStyleSheet(
+            "QListView { border: 2px solid #0078d4; background-color: #f5f9ff; }"
+        )
+    
+    def _set_inactive_style(self) -> None:
+        """非アクティブカラムのスタイル。"""
+        self.setStyleSheet(
+            "QListView { border: 1px solid #cccccc; background-color: white; }"
+        )
+    
+    def mousePressEvent(self, event) -> None:
+        """空白領域クリック時に深いカラムを閉じる。"""
+        index = self.indexAt(event.position().toPoint())
+        if not index.isValid():
+            # 空白領域クリック → このカラム以降を閉じる
+            self.clearSelection()
+            if self.parent_view:
+                self.parent_view.collapse_after_depth(self)
+        super().mousePressEvent(event)
     
     def dragEnterEvent(self, event) -> None:
         """ドラッグ開始時。"""
@@ -308,9 +331,19 @@ class CustomColumnView(QWidget):
             self._add_column(depth + 1, item_path)
             self.pathChanged.emit(item_path)
         elif item_path:
-            # ファイルの場合、親パスで pathChanged
+            # ファイルの場合、depth+1 以降のカラムを削除
             self.current_path = item_path
+            while len(self.views) > depth + 1:
+                view = self.views.pop()
+                self.layout.removeWidget(view)
+                view.deleteLater()
+            while len(self.models) > depth + 1:
+                self.models.pop(max(self.models.keys()))
             self.pathChanged.emit(item_path)
+        
+        # アクティブカラムをハイライト
+        if depth < len(self.views):
+            self._set_active_view(self.views[depth])
     
     def set_backend(self, backend) -> None:
         """Backend を設定。"""
@@ -327,6 +360,27 @@ class CustomColumnView(QWidget):
         
         if backend:
             self._init_columns()
+
+    def _set_active_view(self, active_view: 'ColumnListView') -> None:
+        """アクティブカラムをハイライトし、他を非ハイライトにする。"""
+        for view in self.views:
+            if view is active_view:
+                view._set_active_style()
+            else:
+                view._set_inactive_style()
+
+    def collapse_after_depth(self, list_view: 'ColumnListView') -> None:
+        """指定ビューより深いカラムを閉じ、そのビューをアクティブにする。"""
+        if list_view not in self.views:
+            return
+        depth = self.views.index(list_view)
+        while len(self.views) > depth + 1:
+            view = self.views.pop()
+            self.layout.removeWidget(view)
+            view.deleteLater()
+        while len(self.models) > depth + 1:
+            self.models.pop(max(self.models.keys()))
+        self._set_active_view(list_view)
     
     def navigate_to(self, path: str) -> None:
         """パスに移動。"""
