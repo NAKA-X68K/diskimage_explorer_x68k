@@ -531,17 +531,19 @@ Modified: {item.date_str()}
         return self.models[last_depth].path
 
     def get_selected_paths(self) -> list[str]:
-        """削除対象のパスを返す（全カラムの選択を収集）。"""
-        paths = []
-        seen: set[str] = set()
-        for view in self.views:
+        """削除対象のパスを返す（最も深いカラムの選択のみ）。
+
+        ナビゲーションで通過したカラムにも選択が残るため、
+        最も深い（後ろの）カラムの選択だけを使う。
+        """
+        for view in reversed(self.views):
             sel = view.selectionModel()
             if sel and sel.hasSelection():
                 model = view.model()
+                paths = []
                 for idx in sel.selectedIndexes():
                     if idx.isValid() and idx.row() < len(model.items):
-                        item = model.items[idx.row()]
-                        if item.path not in seen:
-                            paths.append(item.path)
-                            seen.add(item.path)
-        return paths
+                        paths.append(model.items[idx.row()].path)
+                if paths:
+                    return paths
+        return []
