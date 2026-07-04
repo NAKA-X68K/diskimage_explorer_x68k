@@ -88,11 +88,10 @@ def _join_fs_path(base: str, name: str) -> str:
 
 
 def _normalize_path_for_x68k(path: str) -> str:
-    """Normalize path components to uppercase for X68000 compatibility.
+    """Normalize path for X68000 filesystem lookup (case-insensitive).
     
-    X68000 filesystems only support uppercase filenames. This function
-    converts each path component to uppercase while preserving the directory
-    structure.
+    Used for path resolution only. Human68k is case-insensitive for lookups,
+    but filenames are stored with their original case in directory entries.
     
     Example: "/path/to/MyFile.TXT" -> "/PATH/TO/MYFILE.TXT"
     """
@@ -106,28 +105,25 @@ def _normalize_path_for_x68k(path: str) -> str:
 def _to_fat_sfn(filename: str) -> str:
     """Convert filename to FAT 8.3 Short File Name (SFN) format for X68000.
     
-    This avoids LFN (Long File Name) entry generation which X68000/XEiJ cannot handle.
-    The resulting filename is always uppercase and follows FAT SFN rules:
-    - Name part: max 8 characters (uppercase)
-    - Extension: max 3 characters (uppercase)
-    - Names longer than 8 chars are truncated with ~1 suffix: VERYLONGNAME.TXT -> VERYLO~1.TXT
+    Enforces 8.3 length limits while preserving the original case of the filename.
+    Human68k supports lowercase characters in directory entries natively.
     
-    This allows small filenames while avoiding white window errors in XEiJ.
+    - Name part: max 8 characters (original case preserved)
+    - Extension: max 3 characters (original case preserved)
+    - Names longer than 8 chars are truncated with ~1 suffix: verylongname.txt -> verylo~1.txt
     
     Args:
-        filename: Input filename (any case, may include LFN-triggering chars)
+        filename: Input filename (any case)
     
     Returns:
-        FAT SFN format filename (always uppercase, LFN-safe)
+        FAT SFN format filename (case preserved, 8.3 compliant)
         
     Examples:
-        "myfile.txt" -> "MYFILE.TXT"
-        "test" -> "TEST"
-        "verylongfilename.txt" -> "VERYLO~1.TXT"
+        "myfile.txt" -> "myfile.txt"
+        "test" -> "test"
+        "verylongfilename.txt" -> "verylo~1.txt"
     """
-    filename = filename.upper()
-    
-    # Split name and extension
+    # Split name and extension (preserve original case)
     if "." in filename:
         parts = filename.rsplit(".", 1)
         name = parts[0]
@@ -138,7 +134,7 @@ def _to_fat_sfn(filename: str) -> str:
     
     # Ensure name is max 8 chars
     if len(name) > 8:
-        # Truncate and add ~1 suffix
+        # Truncate and add ~1 suffix (preserve case of truncated part)
         name = name[:6] + "~1"
     
     # Ensure extension is max 3 chars
