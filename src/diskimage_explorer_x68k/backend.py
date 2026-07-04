@@ -1005,31 +1005,35 @@ class FatImageBackend:
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
         p = PurePosixPath(fs_dir_path)
-        parent = str(p.parent)
         name = p.name
-        
-        # Apply SFN conversion to avoid LFN
         sfn_name = _to_fat_sfn(name)
-        sfn_path = _join_fs_path(parent, sfn_name)
-        
-        fs.makedir(_clean_fs_path(sfn_path), recreate=False)
+        sfn_path = _join_fs_path(str(p.parent), sfn_name)
+        clean_path = _clean_fs_path(sfn_path)
+
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            # XDFFileSystem: use native makedirs (no LFN generation)
+            fs.makedirs(clean_path)
+            fs.flush()
+        else:
+            fs.makedir(clean_path, recreate=False)
 
     def create_empty_file(self, fs_file_path: str) -> None:
         fs = self._require_fs()
         self._ensure_backup()
-        # Convert to FAT SFN to avoid LFN entries (X68000 incompatible)
         p = PurePosixPath(fs_file_path)
-        parent = str(p.parent)
         name = p.name
-        
-        # Apply SFN conversion to avoid LFN
         sfn_name = _to_fat_sfn(name)
-        sfn_path = _join_fs_path(parent, sfn_name)
-        
-        with fs.openbin(_clean_fs_path(sfn_path), "w"):
-            pass
+        sfn_path = _join_fs_path(str(p.parent), sfn_name)
+        clean_path = _clean_fs_path(sfn_path)
+
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            # XDFFileSystem: use native write_file (no LFN generation)
+            fs.write_file(clean_path, b'')
+            fs.flush()
+        else:
+            with fs.openbin(clean_path, "w"):
+                pass
 
     def delete_paths(self, paths: Iterable[str]) -> None:
         fs = self._require_fs()
