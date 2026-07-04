@@ -1063,8 +1063,14 @@ class FatImageBackend:
 
     def read_file_bytes(self, fs_file_path: str) -> bytes:
         fs = self._require_fs()
-        with fs.openbin(_clean_fs_path(fs_file_path), "r") as fp:
-            return fp.read()
+        clean_path = _clean_fs_path(fs_file_path)
+        
+        # XDFFileSystem uses read_file() instead of openbin()
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            return fs.read_file(clean_path)
+        else:
+            with fs.openbin(clean_path, "r") as fp:
+                return fp.read()
 
     def write_file_bytes(self, fs_file_path: str, data: bytes) -> None:
         fs = self._require_fs()
@@ -1073,8 +1079,14 @@ class FatImageBackend:
             raise ImageMountError("Cannot write bytes to a directory")
 
         self._ensure_backup()
-        with fs.openbin(target, "w") as fp:
-            fp.write(data)
+        
+        # XDFFileSystem uses write_file() instead of openbin()
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            fs.write_file(target, data)
+            fs.flush()
+        else:
+            with fs.openbin(target, "w") as fp:
+                fp.write(data)
         
         # 変更をディスクに保存
         if hasattr(fs, 'flush'):
