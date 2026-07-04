@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
         self.tree.setColumnWidth(3, 190)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.tree.setSelectionBehavior(QTreeWidget.SelectRows)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
         
