@@ -232,21 +232,9 @@ class ColumnListView(QListView):
             edit_action.triggered.connect(
                 lambda: self.parent_view.on_edit_file(self)
             )
-            menu.addSeparator()
         
-        # 削除アクション
-        delete_action = menu.addAction("削除")
-        delete_action.triggered.connect(
-            lambda: self.parent_view.on_delete_selected(self)
-        )
-        
-        # 詳細アクション
-        info_action = menu.addAction("情報")
-        info_action.triggered.connect(
-            lambda: self.parent_view.on_show_info(self)
-        )
-        
-        menu.exec(event.globalPos())
+        if not menu.isEmpty():
+            menu.exec(event.globalPos())
 
 
 class CustomColumnView(QWidget):
