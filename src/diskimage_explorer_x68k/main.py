@@ -292,8 +292,8 @@ class MainWindow(QMainWindow):
         
         # パレット設定でハイライトを有効化
         palette = self.tree.palette()
-        palette.setColor(palette.Highlight, QColor(0, 120, 215))
-        palette.setColor(palette.HighlightedText, QColor(255, 255, 255))
+        palette.setColor(QPalette.Highlight, QColor(0, 120, 215))
+        palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
         self.tree.setPalette(palette)
         
         # スタイルシートも設定
