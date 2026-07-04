@@ -972,6 +972,40 @@ class MainWindow(QMainWindow):
             if bool(n["is_dir"]):
                 self._apply_tree_snapshot(n["children"], item)
 
+    def _save_tree_expanded_state(self) -> set[str]:
+        """展開済みディレクトリのパスセットを返す。"""
+        expanded: set[str] = set()
+        def collect(item) -> None:
+            for i in range(item.childCount()):
+                child = item.child(i)
+                if child.isExpanded():
+                    path = child.data(0, Qt.UserRole)
+                    if path:
+                        expanded.add(str(path))
+                collect(child)
+        collect(self.tree.invisibleRootItem())
+        return expanded
+
+    def _save_tree_selection(self) -> str | None:
+        """選択中アイテムのパスを返す。"""
+        items = self.tree.selectedItems()
+        if items:
+            return items[0].data(0, Qt.UserRole)
+        return None
+
+    def _restore_tree_state(self, expanded: set[str], selected_path: str | None) -> None:
+        """展開状態と選択を復元する。"""
+        def restore(item) -> None:
+            for i in range(item.childCount()):
+                child = item.child(i)
+                path = child.data(0, Qt.UserRole)
+                if path and str(path) in expanded:
+                    child.setExpanded(True)
+                if selected_path and path and str(path) == selected_path:
+                    self.tree.setCurrentItem(child)
+                restore(child)
+        restore(self.tree.invisibleRootItem())
+
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
             self,
@@ -1072,13 +1106,18 @@ class MainWindow(QMainWindow):
         if self.backend.fs is None:
             return
 
+        # 展開状態と選択を保存
+        expanded = self._save_tree_expanded_state()
+        selected_path = self._save_tree_selection()
+
         def work() -> list[dict[str, Any]]:
             return self._build_tree_snapshot("/")
 
         def on_success(snapshot: Any) -> None:
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
-            # Default: all directories collapsed (not expanded)
+            # 展開状態と選択を復元
+            self._restore_tree_state(expanded, selected_path)
             self._set_info_label()
             # カラムビューも更新
             self.column_view.refresh()
