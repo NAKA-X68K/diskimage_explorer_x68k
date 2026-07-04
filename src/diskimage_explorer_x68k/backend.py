@@ -222,6 +222,12 @@ def _x68k_bpb_at(image_bytes: bytes, part_offset: int) -> dict[str, int] | None:
     if part_offset < 0 or part_offset + 0x24 >= len(image_bytes):
         return None
 
+    # Check FAT boot code signature (0xEB or 0xE9 at offset 0)
+    # This distinguishes FAT from other X68000 filesystem formats
+    first_byte = image_bytes[part_offset]
+    if first_byte not in (0xEB, 0xE9):
+        return None
+
     bps = _be16(image_bytes, part_offset + 0x12)
     spc = image_bytes[part_offset + 0x14]
     fats = image_bytes[part_offset + 0x15]
@@ -270,6 +276,11 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
             if reader.is_valid():
                 partitions = reader.get_partitions()
                 for i, partition in enumerate(partitions):
+                    # Validate that this partition contains a FAT filesystem
+                    bpb = _x68k_bpb_at(data, partition.byte_offset)
+                    if bpb is None:
+                        # Not a FAT partition, skip it
+                        continue
                     found.append(
                         MountCandidate(
                             kind=f"x68k-xdf-partition-{i}",
