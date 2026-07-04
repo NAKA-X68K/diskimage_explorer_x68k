@@ -1243,6 +1243,9 @@ class MainWindow(QMainWindow):
 
 def run() -> int:
     app = QApplication(sys.argv)
+    # Apply Fusion style for better selection highlighting
+    from PySide6.QtWidgets import QStyleFactory
+    app.setStyle(QStyleFactory.create('Fusion'))
     window = MainWindow()
     window.show()
     return app.exec()
