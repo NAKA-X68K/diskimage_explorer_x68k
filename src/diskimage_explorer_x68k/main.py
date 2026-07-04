@@ -60,6 +60,18 @@ class DropTreeWidget(QTreeWidget):
         self.setDragEnabled(True)
         self.setDragDropMode(QTreeWidget.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)
+        
+        # ハイライト設定
+        self.setStyleSheet(
+            "QTreeWidget::item:selected { "
+            "background-color: #0078d4 !important; "
+            "color: white !important; "
+            "} "
+            "QTreeWidget::item:hover { "
+            "background-color: #e8f0f8; "
+            "}"
+        )
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def set_external_url_provider(self, provider: Callable[[], list[QUrl]]) -> None:
         self._external_url_provider = provider
@@ -289,23 +301,6 @@ class MainWindow(QMainWindow):
         self.tree.setSelectionBehavior(QTreeWidget.SelectRows)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
-        
-        # パレット設定でハイライトを有効化
-        palette = self.tree.palette()
-        palette.setColor(QPalette.Highlight, QColor(0, 120, 215))
-        palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
-        self.tree.setPalette(palette)
-        
-        # スタイルシートも設定
-        self.tree.setStyleSheet(
-            "QTreeWidget {"
-            "selection-background-color: rgba(0, 120, 215, 200);"
-            "}"
-            "QTreeWidget::item:selected {"
-            "background-color: rgba(0, 120, 215, 200);"
-            "color: white;"
-            "}"
-        )
         
         # カラムビュー設定
         self.column_view = CustomColumnView(None)
