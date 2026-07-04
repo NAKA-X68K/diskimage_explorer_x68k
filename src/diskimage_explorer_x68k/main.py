@@ -317,6 +317,9 @@ class MainWindow(QMainWindow):
         self.tree.localPathsDropped.connect(self.on_local_paths_dropped)
         self.tree.customContextMenuRequested.connect(self._show_tree_context_menu)
         self.tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self.column_view.filesDropped.connect(self.on_local_paths_dropped)
+        self.column_view.pathChanged.connect(self._on_column_view_path_changed)
         self._update_mount_controls()
 
     def _load_mount_history(self) -> None:
@@ -524,6 +527,30 @@ class MainWindow(QMainWindow):
             self._view_file(fs_path, item.text(0))
         elif chosen == act_edit:
             self._edit_file(fs_path, item.text(0))
+
+    def _on_tree_selection_changed(self) -> None:
+        """ツリーの選択が変更された。"""
+        selected = self.tree.selectedItems()
+        if not selected:
+            return
+        
+        item = selected[0]
+        path = self._get_tree_item_path(item)
+        self.column_view.navigate_to(path)
+    
+    def _get_tree_item_path(self, item: QTreeWidgetItem) -> str:
+        """ツリーアイテムのフルパスを取得。"""
+        parts = []
+        current = item
+        
+        while current.parent() is not None:
+            parts.insert(0, current.text(0))
+            current = current.parent()
+        
+        if not parts:
+            return "/"
+        
+        return "/" + "/".join(parts)
 
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         del column
@@ -886,6 +913,8 @@ class MainWindow(QMainWindow):
             self._set_info_label()
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
+            # カラムビューもセットアップ
+            self.column_view.set_backend(self.backend)
             self._update_mount_controls()
             self.statusBar().showMessage("Image mounted")
 
@@ -934,6 +963,38 @@ class MainWindow(QMainWindow):
             return
 
         self._mount_image_path(filename)
+    
+    def _on_column_view_path_changed(self, path: str) -> None:
+        """カラムビューでパスが変更された。"""
+        # ツリーで対応するアイテムを選択
+        self._select_tree_item_by_path(path)
+    
+    def _select_tree_item_by_path(self, path: str) -> None:
+        """指定パスに対応するツリーアイテムを選択。"""
+        if path == "/":
+            self.tree.setCurrentItem(self.tree.invisibleRootItem())
+            self._set_info_label()
+            return
+        
+        # パスを分割
+        parts = path.strip("/").split("/")
+        current_item = self.tree.invisibleRootItem()
+        
+        # 階層を辿る
+        for part in parts:
+            found = False
+            for i in range(current_item.childCount()):
+                child = current_item.child(i)
+                if child.text(0) == part:
+                    current_item = child
+                    found = True
+                    break
+            
+            if not found:
+                break
+        
+        self.tree.setCurrentItem(current_item)
+        self._set_info_label()
 
     def unmount_image(self) -> None:
         if not self._is_mounted():
@@ -941,6 +1002,7 @@ class MainWindow(QMainWindow):
 
         self.backend.unmount()
         self.tree.clear()
+        self.column_view.set_backend(None)
         self._fill_offset_combo()
         self._set_info_label()
         self._update_mount_controls()
@@ -961,6 +1023,8 @@ class MainWindow(QMainWindow):
         def on_success(snapshot: Any) -> None:
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
+            # カラムビューをリセット
+            self.column_view.set_backend(self.backend)
             self._set_info_label()
             self.statusBar().showMessage(f"Remounted: {self.backend.get_offset_label(off)}")
 
@@ -991,6 +1055,8 @@ class MainWindow(QMainWindow):
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
             # Default: all directories collapsed (not expanded)
             self._set_info_label()
+            # カラムビューも更新
+            self.column_view.refresh()
             self.statusBar().showMessage("Refreshed")
 
         self._run_busy_task("Refreshing file tree...", work, on_success, "Refresh failed")
