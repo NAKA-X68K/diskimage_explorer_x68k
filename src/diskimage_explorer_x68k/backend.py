@@ -949,6 +949,10 @@ class FatImageBackend:
         names = fs.listdir(dpath)
         out: list[ImageEntry] = []
         for name in sorted(names, key=str.lower):
+            # Skip . and .. entries (FAT directory self/parent references)
+            if name in (".", ".."):
+                continue
+            
             child = _join_fs_path(dpath, name)
             
             # XDFFileSystem doesn't support namespaces parameter
