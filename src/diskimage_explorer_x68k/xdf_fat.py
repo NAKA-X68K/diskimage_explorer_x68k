@@ -7,7 +7,7 @@ import struct
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
 
-from xdf_format import MediaProfile, BPBFields
+from .xdf_format import MediaProfile, BPBFields
 
 
 # ディレクトリエントリの属性フラグ

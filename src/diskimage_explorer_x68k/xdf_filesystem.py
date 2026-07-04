@@ -9,11 +9,11 @@ from typing import Optional, List, Dict, BinaryIO, Tuple
 from datetime import datetime
 from io import BytesIO
 
-from xdf_format import MediaProfile, BPBFields, MEDIA_PROFILES, MediaType
-from xdf_reader import XDFReader
-from xdf_fat import FATTable, DirectoryReader, DirectoryEntry, ATTR_DIRECTORY, ATTR_ARCHIVE
-from xdf_path import PathParser
-from xdf_hdf_hds import HDFHDSReader, PartitionInfo
+from .xdf_format import MediaProfile, BPBFields, MEDIA_PROFILES, MediaType
+from .xdf_reader import XDFReader
+from .xdf_fat import FATTable, DirectoryReader, DirectoryEntry, ATTR_DIRECTORY, ATTR_ARCHIVE
+from .xdf_path import PathParser
+from .xdf_hdf_hds import HDFHDSReader, PartitionInfo
 
 
 class FileInfo:
@@ -311,7 +311,7 @@ class XDFFileSystem:
         Returns:
             FileInfo オブジェクト
         """
-        from xdf_fat import format_timestamp
+        from .xdf_fat import format_timestamp
         
         result = self._find_entry(path)
         if result is None:
@@ -481,7 +481,7 @@ class XDFFileSystem:
             created_time=dos_time,
             created_date=dos_date,
             accessed_date=dos_date,
-            start_cluster=chain[0],
+            start_cluster=chain[0] if chain else 0,
             file_size=len(data),
             write_time=dos_time,
             write_date=dos_date,

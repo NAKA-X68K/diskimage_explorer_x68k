@@ -12,14 +12,14 @@ from pyfatfs.PyFatFS import PyFatFS, PyFatBytesIOFS
 
 # Import XDF filesystem for native X68000 XDF support
 try:
-    from xdf_filesystem import XDFFileSystem
+    from .xdf_filesystem import XDFFileSystem
     HAS_XDF_SUPPORT = True
 except ImportError:
     HAS_XDF_SUPPORT = False
 
 # Import HDF/HDS reader for partition detection
 try:
-    from xdf_hdf_hds import HDFHDSReader
+    from .xdf_hdf_hds import HDFHDSReader
     HAS_HDF_HDS_SUPPORT = True
 except ImportError:
     HAS_HDF_HDS_SUPPORT = False
@@ -950,8 +950,15 @@ class FatImageBackend:
         out: list[ImageEntry] = []
         for name in sorted(names, key=str.lower):
             child = _join_fs_path(dpath, name)
-            info = fs.getinfo(child, namespaces=["details"])
-            details = info.raw.get("details", {})
+            
+            # XDFFileSystem doesn't support namespaces parameter
+            if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+                info = fs.getinfo(child)
+                details = {}
+            else:
+                info = fs.getinfo(child, namespaces=["details"])
+                details = info.raw.get("details", {})
+            
             size = int(details.get("size", 0))
             modified = details.get("modified")
             if hasattr(modified, "isoformat"):

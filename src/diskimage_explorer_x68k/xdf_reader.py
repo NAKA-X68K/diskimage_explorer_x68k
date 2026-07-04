@@ -4,7 +4,7 @@ import struct
 from pathlib import Path
 from typing import Optional, Tuple
 
-from xdf_format import (
+from .xdf_format import (
     BPBFields,
     MediaProfile,
     MediaType,

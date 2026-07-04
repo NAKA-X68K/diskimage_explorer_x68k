@@ -10,10 +10,10 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from xdf_reader import XDFReader
-from xdf_format import MEDIA_PROFILES
-from xdf_fat import FATTable, DirectoryReader, format_timestamp
-from xdf_path import PathParser, WildcardMatcher
+from .xdf_reader import XDFReader
+from .xdf_format import MEDIA_PROFILES
+from .xdf_fat import FATTable, DirectoryReader, format_timestamp
+from .xdf_path import PathParser, WildcardMatcher
 
 
 def cmd_info(args) -> int:
