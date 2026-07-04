@@ -290,6 +290,14 @@ class MainWindow(QMainWindow):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
         
+        # ハイライトスタイルを設定
+        self.tree.setStyleSheet(
+            "QTreeWidget::item:selected {"
+            "background-color: rgba(0, 120, 215, 200);"
+            "color: white;"
+            "}"
+        )
+        
         # カラムビュー設定
         self.column_view = CustomColumnView(None)
         
