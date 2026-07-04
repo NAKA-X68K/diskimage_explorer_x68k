@@ -1081,8 +1081,42 @@ class FatImageBackend:
             fs.write_file(clean_path, b'')
             fs.flush()
         else:
-            with fs.openbin(clean_path, "w"):
-                pass
+            # For PyFatFS, ensure parent directories exist (makedirs required for nested paths)
+            parent_path = str(PurePosixPath(clean_path).parent)
+            if parent_path != "/" and not fs.exists(parent_path):
+                try:
+                    fs.makedirs(parent_path)
+                except Exception:
+                    pass  # Parent may already exist or be root
+            
+            # PyFatFS openbin("w") has issues with new files after makedirs
+            # Use write_file() instead if available, or try multiple approaches
+            try:
+                # Try write_file() first (some PyFatFS versions support it)
+                if hasattr(fs, 'write_file'):
+                    fs.write_file(clean_path, b'')
+                else:
+                    # Fallback: create via openbin
+                    with fs.openbin(clean_path, "w"):
+                        pass
+            except Exception:
+                # If openbin("w") fails, try touch() via direct file creation
+                try:
+                    with fs.open(clean_path, "wb") as fp:
+                        fp.write(b'')
+                except Exception:
+                    # Last resort: remove old resource and retry
+                    try:
+                        if fs.exists(clean_path):
+                            fs.remove(clean_path)
+                    except Exception:
+                        pass
+                    with fs.openbin(clean_path, "w"):
+                        pass
+            
+            # Flush to ensure write is visible
+            if hasattr(fs, 'flush'):
+                fs.flush()
 
     def delete_paths(self, paths: Iterable[str]) -> None:
         fs = self._require_fs()
