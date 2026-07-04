@@ -10,6 +10,20 @@ from typing import Iterable
 from pyfatfs.PyFat import PyFat
 from pyfatfs.PyFatFS import PyFatFS, PyFatBytesIOFS
 
+# Import XDF filesystem for native X68000 XDF support
+try:
+    from xdf_filesystem import XDFFileSystem
+    HAS_XDF_SUPPORT = True
+except ImportError:
+    HAS_XDF_SUPPORT = False
+
+# Import HDF/HDS reader for partition detection
+try:
+    from xdf_hdf_hds import HDFHDSReader
+    HAS_HDF_HDS_SUPPORT = True
+except ImportError:
+    HAS_HDF_HDS_SUPPORT = False
+
 
 @dataclass
 class ImageEntry:
@@ -253,7 +267,26 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
     data = image_path.read_bytes()
     found: list[MountCandidate] = []
 
-    # SASI style table
+    # Try HDF/HDS native support using XDFFileSystem if available
+    if HAS_XDF_SUPPORT and HAS_HDF_HDS_SUPPORT:
+        try:
+            reader = HDFHDSReader(image_path)
+            if reader.is_valid():
+                partitions = reader.get_partitions()
+                for i, partition in enumerate(partitions):
+                    found.append(
+                        MountCandidate(
+                            kind=f"x68k-xdf-partition-{i}",
+                            offset=partition.byte_offset,
+                            label=partition.label,
+                        )
+                    )
+                if found:
+                    return found
+        except Exception:
+            pass
+
+    # SASI style table (fallback to PyFatFS)
     if (
         len(data) >= 0x500
         and data[0x400:0x404] == b"X68K"
@@ -280,7 +313,7 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
                 )
             )
 
-    # SCSI style table
+    # SCSI style table (fallback to PyFatFS)
     if (
         len(data) >= 0x900
         and data[0x800:0x804] == b"X68K"
@@ -702,7 +735,7 @@ class FatImageBackend:
         self._offset_kind_map: dict[int, str] = {}
         self._offset_label_map: dict[int, str] = {}
         self.current_offset: int = 0
-        self.fs: PyFatFS | None = None
+        self.fs: PyFatFS | XDFFileSystem | None = None
         self._adapter: X68kFatAdapter | None = None
         self._mount_kind: str = "fat"
         self._backup_path: Path | None = None
@@ -740,7 +773,14 @@ class FatImageBackend:
         return self._backup_path
 
     def _mount_with_kind(self, image_path: Path, offset: int, kind: str) -> None:
-        if kind == "x68k-be-bpb":
+        if kind == "x68k-xdf" and HAS_XDF_SUPPORT:
+            # Mount as native XDF using XDFFileSystem (no partition selection)
+            self.fs = XDFFileSystem(image_path, partition=0)
+        elif kind.startswith("x68k-xdf-partition-") and HAS_XDF_SUPPORT:
+            # Mount specific HDF/HDS partition
+            partition_num = int(kind.split("-")[-1])
+            self.fs = XDFFileSystem(image_path, partition=partition_num)
+        elif kind == "x68k-be-bpb":
             self._adapter = X68kFatAdapter(image_path, offset)
             self.fs = PyFatBytesIOFS(
                 fp=self._adapter,
@@ -782,7 +822,23 @@ class FatImageBackend:
 
         # Prefer native X68000 mappings for hard disk images and floppy images.
         suffix = image_path.suffix.lower()
-        if suffix in (".hds", ".hdf") and x68k_candidates:
+        
+        # Check if this is a native XDF file
+        is_xdf_native = False
+        if suffix in (".xdf", ".2hd", ".2dd") and HAS_XDF_SUPPORT:
+            # Try to detect if this is a native XDF file (has X68IPL30 signature)
+            try:
+                with image_path.open("rb") as fp:
+                    head = fp.read(512)
+                    is_xdf_native = len(head) >= 11 and head[3:11] == b"X68IPL30"
+            except Exception:
+                pass
+        
+        if is_xdf_native:
+            # Mount as native XDF using XDFFileSystem
+            self.mount_candidates.append(MountCandidate(kind="x68k-xdf", offset=0, label=f"XDF (native) @ 0x00000000"))
+            self.mount_candidates.extend(fat_candidates)
+        elif suffix in (".hds", ".hdf") and x68k_candidates:
             self.mount_candidates.extend(x68k_candidates)
             self.mount_candidates.extend(fat_candidates)
         elif suffix in (".xdf", ".2hd", ".2dd"):
@@ -884,8 +940,12 @@ class FatImageBackend:
 
     def _is_dir(self, path: str) -> bool:
         fs = self._require_fs()
-        info = fs.getinfo(path, namespaces=["details"])
-        return info.is_dir
+        try:
+            info = fs.getinfo(path, namespaces=["details"])
+            return info.is_dir
+        except Exception:
+            # File does not exist, treat as not a directory
+            return False
 
     def list_dir(self, dir_path: str = "/") -> list[ImageEntry]:
         fs = self._require_fs()
@@ -1000,6 +1060,10 @@ class FatImageBackend:
         self._ensure_backup()
         with fs.openbin(target, "w") as fp:
             fp.write(data)
+        
+        # 変更をディスクに保存
+        if hasattr(fs, 'flush'):
+            fs.flush()
 
     def export_path_to_local(self, fs_path: str, local_target: Path) -> None:
         fs = self._require_fs()
