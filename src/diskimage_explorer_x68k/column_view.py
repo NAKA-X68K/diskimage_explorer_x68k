@@ -211,8 +211,28 @@ class ColumnListView(QListView):
         if not model or not self.parent_view:
             return
         
+        # 選択アイテムがファイルかどうか判定
+        indices = selection_model.selectedIndexes()
+        is_single_file = False
+        if len(indices) == 1 and indices[0].isValid():
+            index = indices[0]
+            if index.row() < len(model.items):
+                is_single_file = not model.items[index.row()].is_dir
+        
         # メニュー作成
         menu = QMenu(self)
+        
+        # ファイル操作（ファイルのみ）
+        if is_single_file:
+            view_action = menu.addAction("View File")
+            view_action.triggered.connect(
+                lambda: self.parent_view.on_view_file(self)
+            )
+            edit_action = menu.addAction("Edit File (text only)")
+            edit_action.triggered.connect(
+                lambda: self.parent_view.on_edit_file(self)
+            )
+            menu.addSeparator()
         
         # 削除アクション
         delete_action = menu.addAction("削除")
@@ -234,6 +254,8 @@ class CustomColumnView(QWidget):
     
     pathChanged = Signal(str)
     filesDropped = Signal(str, list)  # path, local_file_paths
+    fileViewRequested = Signal(str, str)  # fs_path, name
+    fileEditRequested = Signal(str, str)  # fs_path, name
     
     def __init__(self, backend=None, parent=None):
         super().__init__(parent)
@@ -405,3 +427,33 @@ Size: {item.size_str()}
 Modified: {item.date_str()}
             """.strip()
             print(info)  # For now, just print to console
+
+    def _get_selected_file_item(self, list_view: ColumnListView):
+        """選択されたファイルアイテムを返す（ディレクトリは除く）。"""
+        if not list_view:
+            return None
+        selection_model = list_view.selectionModel()
+        if not selection_model or not selection_model.hasSelection():
+            return None
+        model = list_view.model()
+        indices = selection_model.selectedIndexes()
+        if not indices or not indices[0].isValid():
+            return None
+        index = indices[0]
+        if index.row() < len(model.items):
+            item = model.items[index.row()]
+            if not item.is_dir:
+                return item
+        return None
+
+    def on_view_file(self, list_view: ColumnListView) -> None:
+        """ファイルを表示。"""
+        item = self._get_selected_file_item(list_view)
+        if item:
+            self.fileViewRequested.emit(item.path, item.name)
+
+    def on_edit_file(self, list_view: ColumnListView) -> None:
+        """ファイルを編集。"""
+        item = self._get_selected_file_item(list_view)
+        if item:
+            self.fileEditRequested.emit(item.path, item.name)

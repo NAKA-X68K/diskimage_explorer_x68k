@@ -338,6 +338,8 @@ class MainWindow(QMainWindow):
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self.column_view.filesDropped.connect(self.on_local_paths_dropped)
         self.column_view.pathChanged.connect(self._on_column_view_path_changed)
+        self.column_view.fileViewRequested.connect(self._view_file)
+        self.column_view.fileEditRequested.connect(self._edit_file)
         self._update_mount_controls()
 
     def _load_mount_history(self) -> None:
