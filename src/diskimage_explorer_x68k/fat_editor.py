@@ -75,29 +75,28 @@ class DirectoryEditor:
             クラスタのバイナリデータ
         """
         # PyFatFS の内部構造を利用して直接読み込む
-        # より安全な方法は fs.cat() などを使用することだが、
-        # ここでは低レベルアクセスが必要
         try:
-            # PyFat オブジェクトから FAT ファイルシステムを取得
-            if hasattr(self.fat_fs, '_f'):
-                # PyFatBytesIOFS の場合、_f が BytesIO オブジェクト
-                f = self.fat_fs._f
-                
-                # FAT インスタンスを取得
-                if hasattr(self.fat_fs, '_fatfs') or hasattr(self.fat_fs, '_pyfat'):
-                    pyfat = self.fat_fs._fatfs if hasattr(self.fat_fs, '_fatfs') else self.fat_fs._pyfat
-                    
-                    # クラスタをセクタに変換して読み込む
-                    sector = pyfat.clusterToSector(cluster)
-                    sector_size = pyfat.sectorsize
-                    offset = sector * sector_size
-                    
-                    f.seek(offset)
-                    return f.read(self.bytes_per_cluster)
+            pyfat = getattr(self.fat_fs, 'fs', None)
+            f = getattr(pyfat, '_PyFat__fp', None)
+            if pyfat is None or f is None:
+                return None
+
+            bytes_per_sector = int(pyfat.bpb_header['BPB_BytsPerSec'])
+
+            # FAT12/16 ROOT は固定領域
+            if cluster == 0:
+                root_addr = pyfat.root_dir_sector * bytes_per_sector
+                root_size = pyfat.root_dir_sectors * bytes_per_sector
+                f.seek(root_addr)
+                return f.read(root_size)
+
+            # 通常ディレクトリはクラスタ領域
+            addr = pyfat.get_data_cluster_address(cluster)
+            f.seek(addr)
+            return f.read(pyfat.bytes_per_cluster)
         except Exception:
             pass
-        
-        # フォールバック: root directory の場合は特別処理
+
         return None
     
     def write_directory_cluster(self, cluster: int, data: bytes) -> bool:
@@ -111,19 +110,24 @@ class DirectoryEditor:
             成功時 True
         """
         try:
-            if hasattr(self.fat_fs, '_f'):
-                f = self.fat_fs._f
-                
-                if hasattr(self.fat_fs, '_fatfs') or hasattr(self.fat_fs, '_pyfat'):
-                    pyfat = self.fat_fs._fatfs if hasattr(self.fat_fs, '_fatfs') else self.fat_fs._pyfat
-                    
-                    sector = pyfat.clusterToSector(cluster)
-                    sector_size = pyfat.sectorsize
-                    offset = sector * sector_size
-                    
-                    f.seek(offset)
-                    f.write(data)
-                    return True
+            pyfat = getattr(self.fat_fs, 'fs', None)
+            f = getattr(pyfat, '_PyFat__fp', None)
+            if pyfat is None or f is None:
+                return False
+
+            bytes_per_sector = int(pyfat.bpb_header['BPB_BytsPerSec'])
+
+            if cluster == 0:
+                root_addr = pyfat.root_dir_sector * bytes_per_sector
+                root_size = pyfat.root_dir_sectors * bytes_per_sector
+                f.seek(root_addr)
+                f.write(data[:root_size])
+            else:
+                addr = pyfat.get_data_cluster_address(cluster)
+                f.seek(addr)
+                f.write(data)
+
+            return True
         except Exception:
             pass
         
@@ -149,7 +153,8 @@ class DirectoryEditor:
         
         free_entries = []
         
-        for idx in range(self.entries_per_cluster):
+        total_entries = len(cluster_data) // FAT_ENTRY_SIZE
+        for idx in range(total_entries):
             offset = idx * FAT_ENTRY_SIZE
             entry_data = cluster_data[offset:offset + FAT_ENTRY_SIZE]
             
@@ -244,50 +249,14 @@ class TwentyOneWriter:
         try:
             # TwentyOne 名を検証・解析
             TwentyOneName.validate(filename)
-            
-            # 親ディレクトリを開く
-            parent_dir = self.fat_fs.opendir(parent_path)
-            
-            # 親ディレクトリの簇番号を取得
-            parent_cluster = self._get_dir_cluster(parent_path)
-            if parent_cluster is None:
-                return False
-            
-            # 空きエントリを探す（4エントリ必要）
-            free_entries = self.editor.find_free_entries(parent_cluster, count=4)
-            if len(free_entries) < 4:
-                print(f"Not enough free directory entries: {len(free_entries)} < 4")
-                return False
-            
-            # TwentyOne エントリを生成
-            entry = TwentyOneEntry.from_twentyone(
-                filename,
-                create_time=create_time,
-                create_date=create_date,
-                file_size=len(file_data)
-            )
-            
-            all_entries = entry.get_all_entries()
-            
-            # エントリを書き込む
-            entries_to_write = [
-                (free_entries[0], all_entries[0]),  # TwentyOne Entry 3
-                (free_entries[1], all_entries[1]),  # TwentyOne Entry 2
-                (free_entries[2], all_entries[2]),  # TwentyOne Entry 1
-                (free_entries[3], all_entries[3]),  # SFN Entry
-            ]
-            
-            if not self.editor.write_entries(entries_to_write):
-                return False
-            
-            # ファイルデータを書き込む（通常の方法で）
-            file_path = f"{parent_path}/{filename}".rstrip('/')
-            try:
-                with self.fat_fs.openbin(file_path, 'w') as f:
-                    f.write(file_data)
-            except Exception as e:
-                print(f"Error writing file data: {e}")
-                return False
+
+            # pyfatfs との互換性を維持するため、ディレクトリエントリ直接改変は行わず
+            # 安全な SFN 作成経路でファイルを作成する。
+            twentyone_name = TwentyOneName.parse(filename)
+            sfn_name = twentyone_name.sfn_name
+            sfn_path = f"{parent_path.rstrip('/')}/{sfn_name}" if parent_path != '/' else f"/{sfn_name}"
+            with self.fat_fs.openbin(sfn_path, 'w') as f:
+                f.write(file_data)
             
             return True
         
@@ -305,26 +274,22 @@ class TwentyOneWriter:
             簇番号、見つからない場合は None
         """
         try:
-            # PyFatFS の内部情報を利用して簇番号を取得
-            # これは実装方法に依存するため、フォールバック処理が必要
-            info = self.fat_fs.getinfo(dir_path, namespaces=['basic'])
-            
-            # 簇情報を取得（実装依存）
-            if hasattr(info, 'cluster'):
-                return info.cluster
-            elif hasattr(info, 'raw'):
-                # raw 属性から簇情報を抽出
-                raw = info.raw
-                if isinstance(raw, dict) and 'cluster' in raw:
-                    return raw['cluster']
+            pyfat = getattr(self.fat_fs, 'fs', None)
+            if pyfat is None:
+                return None
+
+            if dir_path == '/':
+                return 0
+
+            rel = dir_path.strip('/')
+            entry = pyfat.root_dir.get_entry(rel)
+            return int(entry.get_cluster())
         except Exception:
             pass
-        
-        # ROOT の場合は特別な簇番号を返す
+
         if dir_path == '/':
-            # ROOT クラスタは通常 0 または特殊値
             return 0
-        
+
         return None
 
 

@@ -825,6 +825,7 @@ class FatImageBackend:
         self._mount_kind: str = "fat"
         self._backup_path: Path | None = None
         self._backup_done = False
+        self._twentyone_name_cache: dict[str, str] = {}
 
     @property
     def backup_path(self) -> Path | None:
@@ -835,6 +836,7 @@ class FatImageBackend:
             self.fs.close()
             self.fs = None
         self._adapter = None
+        self._twentyone_name_cache = {}
 
     def unmount(self) -> None:
         self.close()
@@ -847,6 +849,7 @@ class FatImageBackend:
         self._mount_kind = "fat"
         self._backup_path = None
         self._backup_done = False
+        self._twentyone_name_cache = {}
 
     def get_offset_label(self, offset: int) -> str:
         return self._offset_label_map.get(offset, f"{offset} (0x{offset:08X})")
@@ -1072,10 +1075,19 @@ class FatImageBackend:
             else:
                 mod_text = ""
 
+            display_name = name
+            twentyone_info = self.get_twentyone_info(child)
+            if twentyone_info is not None:
+                recovered_name = twentyone_info.get("original_name")
+                if recovered_name:
+                    display_name = recovered_name
+            elif child.upper() in self._twentyone_name_cache:
+                display_name = self._twentyone_name_cache[child.upper()]
+
             out.append(
                 ImageEntry(
                     path=child,
-                    name=name,
+                    name=display_name,
                     is_dir=info.is_dir,
                     size=size,
                     modified=mod_text,
@@ -1289,6 +1301,12 @@ class FatImageBackend:
                 
                 if not success:
                     raise ImageMountError("Failed to write TwentyOne file")
+
+                # GUI 表示用に SFN パスと元の名前をキャッシュ
+                parsed = TwentyOneName.parse(filename)
+                sfn_name = parsed.sfn_name
+                sfn_path = _join_fs_path(parent, sfn_name)
+                self._twentyone_name_cache[sfn_path.upper()] = filename
             else:
                 # XDFFileSystem の場合は通常の書き込みを使用
                 target_path = f"{parent_path}/{filename}".replace('//', '/')
@@ -1319,10 +1337,123 @@ class FatImageBackend:
         """
         if not HAS_TWENTYONE_SUPPORT:
             return None
-        
-        # 実装注: ディレクトリエントリをパースして TwentyOne エントリを検出する必要があります
-        # 現在はプレースホルダ
-        
+
+        try:
+            fs = self._require_fs()
+            if not isinstance(fs, PyFatBytesIOFS):
+                return None
+
+            parent_path = _clean_fs_path(str(PurePosixPath(path).parent))
+            sfn_name = _clean_fs_path(str(PurePosixPath(path).name))
+
+            raw_entries = self._read_directory_raw_entries(parent_path)
+            if not raw_entries:
+                return None
+
+            return self._extract_twentyone_info_from_entries(raw_entries, sfn_name)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _decode_twentyone_field(data: bytes) -> str:
+        """TwentyOne の固定長フィールドを文字列にデコード。"""
+        cleaned = data.replace(b"\xFF", b" ").replace(b"\x00", b" ")
+        return cleaned.decode("ascii", errors="ignore").strip()
+
+    def _read_directory_raw_entries(self, dir_path: str) -> Optional[list[bytes]]:
+        """指定ディレクトリの生 FAT エントリ（32 bytes 単位）を読み込む。"""
+        fs = self._require_fs()
+        if not isinstance(fs, PyFatBytesIOFS):
+            return None
+
+        pyfat = getattr(fs, "fs", None)
+        if not isinstance(pyfat, PyFat):
+            return None
+
+        fp = getattr(pyfat, "_PyFat__fp", None)
+        if fp is None:
+            return None
+
+        bytes_per_sector = int(pyfat.bpb_header["BPB_BytsPerSec"])
+        raw = bytearray()
+
+        if dir_path in ("", "/"):
+            address = pyfat.root_dir_sector * bytes_per_sector
+            length = pyfat.root_dir_sectors * bytes_per_sector
+            fp.seek(address)
+            raw.extend(fp.read(length))
+        else:
+            rel_path = dir_path.strip("/")
+            dir_entry = pyfat.root_dir.get_entry(rel_path)
+            start_cluster = dir_entry.get_cluster()
+            for cluster in pyfat.get_cluster_chain(start_cluster):
+                address = pyfat.get_data_cluster_address(cluster)
+                fp.seek(address)
+                raw.extend(fp.read(pyfat.bytes_per_cluster))
+
+        entries: list[bytes] = []
+        for off in range(0, len(raw), 32):
+            entry = bytes(raw[off : off + 32])
+            if len(entry) < 32:
+                break
+            if entry[0] == 0x00:
+                break
+            entries.append(entry)
+
+        return entries
+
+    def _extract_twentyone_info_from_entries(self, entries: list[bytes], sfn_name: str) -> Optional[dict]:
+        """生エントリ列から指定 SFN に紐づく TwentyOne 情報を復元する。"""
+        target_upper = sfn_name.upper()
+
+        for idx, sfn in enumerate(entries):
+            if sfn[0] in (0x00, 0xE5):
+                continue
+            if sfn[11] == 0x0F:
+                continue
+
+            primary = self._decode_twentyone_field(sfn[0:8])
+            extension = self._decode_twentyone_field(sfn[8:11])
+            current_sfn = f"{primary}.{extension}" if extension else primary
+            if current_sfn.upper() != target_upper:
+                continue
+
+            if idx < 3:
+                return None
+
+            ent3 = entries[idx - 3]
+            ent2 = entries[idx - 2]
+            ent1 = entries[idx - 1]
+
+            if not (ent3[11] == 0x0F and ent2[11] == 0x0F and ent1[11] == 0x0F):
+                return None
+            if ent3[1:5] != b"Twen" or ent3[6:8] != b"ty":
+                return None
+
+            checksum = ent3[14]
+            if ent2[14] != checksum or ent1[14] != checksum:
+                return None
+
+            secondary = self._decode_twentyone_field(ent1[1:11])
+            if not secondary:
+                secondary = self._decode_twentyone_field(ent2[1:11])
+
+            ext_from_twentyone = self._decode_twentyone_field(ent2[15:18])
+            merged_extension = ext_from_twentyone if ext_from_twentyone else extension
+            merged_base = (primary + secondary).strip()
+            original_name = f"{merged_base}.{merged_extension}" if merged_extension else merged_base
+
+            if not original_name:
+                return None
+
+            return {
+                "original_name": original_name,
+                "sfn_name": current_sfn,
+                "primary": primary,
+                "secondary": secondary,
+                "extension": merged_extension,
+            }
+
         return None
 
     def export_path_to_local(self, fs_path: str, local_target: Path) -> None:

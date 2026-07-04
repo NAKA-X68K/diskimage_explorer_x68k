@@ -1144,7 +1144,8 @@ class MainWindow(QMainWindow):
             found = False
             for i in range(current_item.childCount()):
                 child = current_item.child(i)
-                if child.text(0) == part:
+                child_path = child.data(0, Qt.UserRole)
+                if child_path and PurePosixPath(str(child_path)).name == part:
                     current_item = child
                     found = True
                     break
