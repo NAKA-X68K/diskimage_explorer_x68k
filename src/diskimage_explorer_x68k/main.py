@@ -63,6 +63,12 @@ class DropTreeWidget(QTreeWidget):
         
         # ハイライト設定
         self.setStyleSheet(
+            "QTreeWidget { "
+            "background-color: white; "
+            "} "
+            "QTreeWidget::item { "
+            "padding: 2px; "
+            "} "
             "QTreeWidget::item:selected { "
             "background-color: #0078d4 !important; "
             "color: white !important; "
@@ -296,7 +302,6 @@ class MainWindow(QMainWindow):
         self.tree.setColumnWidth(1, 88)
         self.tree.setColumnWidth(2, 92)
         self.tree.setColumnWidth(3, 190)
-        self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.tree.setSelectionBehavior(QTreeWidget.SelectRows)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
