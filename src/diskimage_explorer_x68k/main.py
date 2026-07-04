@@ -8,7 +8,7 @@ import tempfile
 from typing import Any, Callable
 
 from PySide6.QtCore import QMimeData, QSettings, QThread, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDrag, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QDrag, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -290,8 +290,17 @@ class MainWindow(QMainWindow):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
         
-        # ハイライトスタイルを設定
+        # パレット設定でハイライトを有効化
+        palette = self.tree.palette()
+        palette.setColor(palette.Highlight, QColor(0, 120, 215))
+        palette.setColor(palette.HighlightedText, QColor(255, 255, 255))
+        self.tree.setPalette(palette)
+        
+        # スタイルシートも設定
         self.tree.setStyleSheet(
+            "QTreeWidget {"
+            "selection-background-color: rgba(0, 120, 215, 200);"
+            "}"
             "QTreeWidget::item:selected {"
             "background-color: rgba(0, 120, 215, 200);"
             "color: white;"
