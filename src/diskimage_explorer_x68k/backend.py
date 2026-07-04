@@ -218,25 +218,48 @@ def _be32(buf: bytes, off: int) -> int:
     return int.from_bytes(buf[off : off + 4], "big")
 
 
+
 def _x68k_bpb_at(image_bytes: bytes, part_offset: int) -> dict[str, int] | None:
-    if part_offset < 0 or part_offset + 0x24 >= len(image_bytes):
+    """Read X68K BPB from big-endian format.
+    
+    X68000 uses big-endian byte order for multi-byte fields and stores the BPB
+    at a different offset than standard PC FAT. This function reads the X68000
+    BPB format without requiring a boot code signature (0xEB/0xE9), which is
+    not always present in X68000 partitions.
+    
+    BPB offset layout (relative to part_offset):
+    - +0x00-0x11: IPL code or boot parameters
+    - +0x12: BPB starts here
+      - +0x00-0x01: bytes_per_sector (BE)
+      - +0x02: sectors_per_cluster
+      - +0x03-0x04: reserved_sectors (BE)
+      - +0x05: fat_count
+      - +0x06-0x07: root_entries (BE)
+      - +0x08-0x09: total_sectors_16 (BE)
+      - +0x0A: media_descriptor
+      - +0x0B-0x0C: sectors_per_fat (BE)
+      - +0x0D-0x0E: sectors_per_track (BE)
+      - +0x0F-0x10: heads (BE)
+      - +0x11-0x14: hidden_sectors (BE)
+      - +0x15-0x18: total_sectors_32 (BE)
+    """
+    if part_offset < 0 or part_offset + 0x2A >= len(image_bytes):
         return None
 
-    # Check FAT boot code signature (0xEB or 0xE9 at offset 0)
-    # This distinguishes FAT from other X68000 filesystem formats
-    first_byte = image_bytes[part_offset]
-    if first_byte not in (0xEB, 0xE9):
+    # BPB starts at offset 0x12 (not 0x0B like PC FAT)
+    bpb_base = part_offset + 0x12
+    if bpb_base + 0x19 >= len(image_bytes):
         return None
 
-    bps = _be16(image_bytes, part_offset + 0x12)
-    spc = image_bytes[part_offset + 0x14]
-    fats = image_bytes[part_offset + 0x15]
-    rsvd = _be16(image_bytes, part_offset + 0x16)
-    root = _be16(image_bytes, part_offset + 0x18)
-    tot16 = _be16(image_bytes, part_offset + 0x1A)
-    media = image_bytes[part_offset + 0x1C]
-    fatsz = image_bytes[part_offset + 0x1D]
-    tot32 = _be32(image_bytes, part_offset + 0x1E)
+    bps = _be16(image_bytes, bpb_base + 0x00)
+    spc = image_bytes[bpb_base + 0x02]
+    rsvd = _be16(image_bytes, bpb_base + 0x03)
+    fats = image_bytes[bpb_base + 0x05]
+    root = _be16(image_bytes, bpb_base + 0x06)
+    tot16 = _be16(image_bytes, bpb_base + 0x08)
+    media = image_bytes[bpb_base + 0x0A]
+    fatsz = _be16(image_bytes, bpb_base + 0x0B)
+    tot32 = _be32(image_bytes, bpb_base + 0x15)
 
     if bps not in (512, 1024, 2048, 4096):
         return None
@@ -283,7 +306,7 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
                         continue
                     found.append(
                         MountCandidate(
-                            kind=f"x68k-xdf-partition-{i}",
+                            kind="x68k-be-bpb",
                             offset=partition.byte_offset,
                             label=partition.label,
                         )
@@ -309,16 +332,18 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
             if start_record == 0 or part_records == 0:
                 continue
             part_offset = start_record * 256
+            
+            # Try to find valid FAT partition in partition area
+            # First check partition start
             bpb = _x68k_bpb_at(data, part_offset)
-            if bpb is None:
-                continue
-            found.append(
-                MountCandidate(
-                    kind="x68k-be-bpb",
-                    offset=part_offset,
-                    label=f"X68K SASI part#{i + 1} @ 0x{part_offset:08X}",
+            if bpb is not None:
+                found.append(
+                    MountCandidate(
+                        kind="x68k-be-bpb",
+                        offset=part_offset,
+                        label=f"X68K SASI part#{i + 1} @ 0x{part_offset:08X}",
+                    )
                 )
-            )
 
     # SCSI style table (fallback to PyFatFS)
     if (
@@ -336,16 +361,18 @@ def detect_x68k_partition_candidates(image_path: Path) -> list[MountCandidate]:
             if start_sector == 0 or part_sectors == 0:
                 continue
             part_offset = start_sector * 1024
+            
+            # Try to find valid FAT partition in partition area
+            # First check partition start
             bpb = _x68k_bpb_at(data, part_offset)
-            if bpb is None:
-                continue
-            found.append(
-                MountCandidate(
-                    kind="x68k-be-bpb",
-                    offset=part_offset,
-                    label=f"X68K SCSI part#{i + 1} @ 0x{part_offset:08X}",
+            if bpb is not None:
+                found.append(
+                    MountCandidate(
+                        kind="x68k-be-bpb",
+                        offset=part_offset,
+                        label=f"X68K SCSI part#{i + 1} @ 0x{part_offset:08X}",
+                    )
                 )
-            )
 
     uniq: list[MountCandidate] = []
     seen: set[tuple[str, int]] = set()
