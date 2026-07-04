@@ -1,0 +1,375 @@
+"""
+FAT Direct Editor for TwentyOne Support
+
+FAT ディレクトリセクタを直接編集して TwentyOne エントリを生成・書き込みする
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, List, Tuple, BinaryIO
+import struct
+import io
+
+from .twentyone import (
+    TwentyOneName,
+    TwentyOneEntry,
+    FAT_ENTRY_SIZE,
+    FAT_DIRENT_FREE,
+)
+
+
+@dataclass
+class DirectoryEntry:
+    """FAT ディレクトリエントリの情報"""
+    
+    cluster: int        # 簇番号
+    entry_idx: int      # 簇内のエントリインデックス（0-15）
+    data: bytes         # 32バイトのエントリデータ
+    
+    @property
+    def offset_in_cluster(self) -> int:
+        """簇内のバイトオフセット"""
+        return self.entry_idx * FAT_ENTRY_SIZE
+    
+    def is_free(self) -> bool:
+        """フリーエントリかチェック"""
+        return self.data[0] == FAT_DIRENT_FREE
+    
+    def is_empty(self) -> bool:
+        """未使用エントリかチェック（0x00）"""
+        return self.data[0] == 0x00
+    
+    def is_lfn(self) -> bool:
+        """LFN エントリかチェック"""
+        return self.data[11] == 0x0F
+    
+    def __str__(self) -> str:
+        return f"DirectoryEntry(cluster={self.cluster}, idx={self.entry_idx}, free={self.is_free()})"
+
+
+class DirectoryEditor:
+    """FAT ディレクトリセクタを直接操作"""
+    
+    def __init__(
+        self,
+        fat_fs,  # PyFatBytesIOFS インスタンス
+        bytes_per_cluster: int = 1024
+    ):
+        """初期化
+        
+        Args:
+            fat_fs: PyFatBytesIOFS インスタンス（マウント済み）
+            bytes_per_cluster: 1クラスタのバイト数（通常 512 または 1024）
+        """
+        self.fat_fs = fat_fs
+        self.bytes_per_cluster = bytes_per_cluster
+        self.entries_per_cluster = bytes_per_cluster // FAT_ENTRY_SIZE  # 32 or 16
+    
+    def read_directory_cluster(self, cluster: int) -> bytes:
+        """ディレクトリクラスタを読み込む
+        
+        Args:
+            cluster: 簇番号
+            
+        Returns:
+            クラスタのバイナリデータ
+        """
+        # PyFatFS の内部構造を利用して直接読み込む
+        # より安全な方法は fs.cat() などを使用することだが、
+        # ここでは低レベルアクセスが必要
+        try:
+            # PyFat オブジェクトから FAT ファイルシステムを取得
+            if hasattr(self.fat_fs, '_f'):
+                # PyFatBytesIOFS の場合、_f が BytesIO オブジェクト
+                f = self.fat_fs._f
+                
+                # FAT インスタンスを取得
+                if hasattr(self.fat_fs, '_fatfs') or hasattr(self.fat_fs, '_pyfat'):
+                    pyfat = self.fat_fs._fatfs if hasattr(self.fat_fs, '_fatfs') else self.fat_fs._pyfat
+                    
+                    # クラスタをセクタに変換して読み込む
+                    sector = pyfat.clusterToSector(cluster)
+                    sector_size = pyfat.sectorsize
+                    offset = sector * sector_size
+                    
+                    f.seek(offset)
+                    return f.read(self.bytes_per_cluster)
+        except Exception:
+            pass
+        
+        # フォールバック: root directory の場合は特別処理
+        return None
+    
+    def write_directory_cluster(self, cluster: int, data: bytes) -> bool:
+        """ディレクトリクラスタに書き込む
+        
+        Args:
+            cluster: 簇番号
+            data: 書き込むバイナリデータ（クラスタサイズ）
+            
+        Returns:
+            成功時 True
+        """
+        try:
+            if hasattr(self.fat_fs, '_f'):
+                f = self.fat_fs._f
+                
+                if hasattr(self.fat_fs, '_fatfs') or hasattr(self.fat_fs, '_pyfat'):
+                    pyfat = self.fat_fs._fatfs if hasattr(self.fat_fs, '_fatfs') else self.fat_fs._pyfat
+                    
+                    sector = pyfat.clusterToSector(cluster)
+                    sector_size = pyfat.sectorsize
+                    offset = sector * sector_size
+                    
+                    f.seek(offset)
+                    f.write(data)
+                    return True
+        except Exception:
+            pass
+        
+        return False
+    
+    def find_free_entries(
+        self,
+        parent_cluster: int,
+        count: int = 4
+    ) -> List[DirectoryEntry]:
+        """連続した空きエントリを検索
+        
+        Args:
+            parent_cluster: 親ディレクトリの簇番号
+            count: 必要なエントリ数（デフォルト: 4 = TwentyOne用）
+            
+        Returns:
+            空きエントリのリスト、見つからなかった場合は空リスト
+        """
+        cluster_data = self.read_directory_cluster(parent_cluster)
+        if cluster_data is None:
+            return []
+        
+        free_entries = []
+        
+        for idx in range(self.entries_per_cluster):
+            offset = idx * FAT_ENTRY_SIZE
+            entry_data = cluster_data[offset:offset + FAT_ENTRY_SIZE]
+            
+            entry = DirectoryEntry(
+                cluster=parent_cluster,
+                entry_idx=idx,
+                data=entry_data
+            )
+            
+            # フリーまたは未使用エントリをカウント
+            if entry.is_free() or entry.is_empty():
+                free_entries.append(entry)
+                if len(free_entries) == count:
+                    return free_entries
+            else:
+                # 連続でない場合はリセット
+                free_entries = []
+        
+        # 見つからなかった場合
+        return []
+    
+    def write_entries(
+        self,
+        entries_to_write: List[Tuple[DirectoryEntry, bytes]]
+    ) -> bool:
+        """複数のエントリを書き込む
+        
+        Args:
+            entries_to_write: [(DirectoryEntry, bytes), ...] のリスト
+                            同一クラスタ内のエントリが想定される
+            
+        Returns:
+            成功時 True
+        """
+        if not entries_to_write:
+            return False
+        
+        # すべてのエントリが同じクラスタにあるかチェック
+        first_cluster = entries_to_write[0][0].cluster
+        if not all(entry[0].cluster == first_cluster for entry in entries_to_write):
+            raise ValueError("All entries must be in the same cluster")
+        
+        # クラスタデータを読み込む
+        cluster_data = self.read_directory_cluster(first_cluster)
+        if cluster_data is None:
+            return False
+        
+        # バイナリを更新
+        cluster_data = bytearray(cluster_data)
+        
+        for entry, new_data in entries_to_write:
+            offset = entry.offset_in_cluster
+            cluster_data[offset:offset + FAT_ENTRY_SIZE] = new_data
+        
+        # クラスタに書き込む
+        return self.write_directory_cluster(first_cluster, bytes(cluster_data))
+
+
+class TwentyOneWriter:
+    """TwentyOne ファイルを FAT に書き込む"""
+    
+    def __init__(self, fat_fs, bytes_per_cluster: int = 1024):
+        """初期化
+        
+        Args:
+            fat_fs: PyFatBytesIOFS インスタンス
+            bytes_per_cluster: クラスタサイズ
+        """
+        self.fat_fs = fat_fs
+        self.editor = DirectoryEditor(fat_fs, bytes_per_cluster)
+    
+    def write_file(
+        self,
+        parent_path: str,
+        filename: str,
+        file_data: bytes,
+        create_time: int = 0,
+        create_date: int = 0
+    ) -> bool:
+        """TwentyOne ファイルを書き込む
+        
+        Args:
+            parent_path: 親ディレクトリのパス（例："/DIR1"）
+            filename: ファイル名（最大21文字）
+            file_data: ファイルのバイナリデータ
+            create_time: 作成時刻（DOS形式）
+            create_date: 作成日付（DOS形式）
+            
+        Returns:
+            成功時 True
+        """
+        try:
+            # TwentyOne 名を検証・解析
+            TwentyOneName.validate(filename)
+            
+            # 親ディレクトリを開く
+            parent_dir = self.fat_fs.opendir(parent_path)
+            
+            # 親ディレクトリの簇番号を取得
+            parent_cluster = self._get_dir_cluster(parent_path)
+            if parent_cluster is None:
+                return False
+            
+            # 空きエントリを探す（4エントリ必要）
+            free_entries = self.editor.find_free_entries(parent_cluster, count=4)
+            if len(free_entries) < 4:
+                print(f"Not enough free directory entries: {len(free_entries)} < 4")
+                return False
+            
+            # TwentyOne エントリを生成
+            entry = TwentyOneEntry.from_twentyone(
+                filename,
+                create_time=create_time,
+                create_date=create_date,
+                file_size=len(file_data)
+            )
+            
+            all_entries = entry.get_all_entries()
+            
+            # エントリを書き込む
+            entries_to_write = [
+                (free_entries[0], all_entries[0]),  # TwentyOne Entry 3
+                (free_entries[1], all_entries[1]),  # TwentyOne Entry 2
+                (free_entries[2], all_entries[2]),  # TwentyOne Entry 1
+                (free_entries[3], all_entries[3]),  # SFN Entry
+            ]
+            
+            if not self.editor.write_entries(entries_to_write):
+                return False
+            
+            # ファイルデータを書き込む（通常の方法で）
+            file_path = f"{parent_path}/{filename}".rstrip('/')
+            try:
+                with self.fat_fs.openbin(file_path, 'w') as f:
+                    f.write(file_data)
+            except Exception as e:
+                print(f"Error writing file data: {e}")
+                return False
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error writing TwentyOne file: {e}")
+            return False
+    
+    def _get_dir_cluster(self, dir_path: str) -> Optional[int]:
+        """ディレクトリの簇番号を取得
+        
+        Args:
+            dir_path: ディレクトリパス
+            
+        Returns:
+            簇番号、見つからない場合は None
+        """
+        try:
+            # PyFatFS の内部情報を利用して簇番号を取得
+            # これは実装方法に依存するため、フォールバック処理が必要
+            info = self.fat_fs.getinfo(dir_path, namespaces=['basic'])
+            
+            # 簇情報を取得（実装依存）
+            if hasattr(info, 'cluster'):
+                return info.cluster
+            elif hasattr(info, 'raw'):
+                # raw 属性から簇情報を抽出
+                raw = info.raw
+                if isinstance(raw, dict) and 'cluster' in raw:
+                    return raw['cluster']
+        except Exception:
+            pass
+        
+        # ROOT の場合は特別な簇番号を返す
+        if dir_path == '/':
+            # ROOT クラスタは通常 0 または特殊値
+            return 0
+        
+        return None
+
+
+def demo_twentyone_writer():
+    """TwentyOneWriter のデモンストレーション"""
+    print("=== TwentyOneWriter Demo ===\n")
+    
+    from .backend import FatImageBackend
+    from pathlib import Path
+    
+    image_path = Path('/Users/taknakam/X68000/TEST_DATA/SCSI_restored.HDS')
+    
+    backend = FatImageBackend()
+    
+    try:
+        backend.mount(str(image_path))
+        print("✓ Mounted SCSI_restored.HDS\n")
+        
+        # ファイルシステムを取得
+        if hasattr(backend, 'fs') and backend.fs:
+            writer = TwentyOneWriter(backend.fs)
+            
+            # テストファイルを書き込む
+            test_data = b"This is a test file for TwentyOne support."
+            
+            print("Attempting to write TwentyOne file...")
+            result = writer.write_file(
+                parent_path="/DIR1",
+                filename="longfilename123456.x",
+                file_data=test_data
+            )
+            
+            if result:
+                print("✓ TwentyOne file written successfully!")
+            else:
+                print("✗ Failed to write TwentyOne file")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        backend.close()
+
+
+if __name__ == "__main__":
+    demo_twentyone_writer()

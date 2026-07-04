@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 from pathlib import Path, PurePosixPath
 import shutil
-from typing import Iterable
+from typing import Iterable, Tuple, Optional
 
 from pyfatfs.PyFat import PyFat
 from pyfatfs.PyFatFS import PyFatFS, PyFatBytesIOFS
@@ -62,6 +62,18 @@ try:
     HAS_HDF_HDS_SUPPORT = True
 except ImportError:
     HAS_HDF_HDS_SUPPORT = False
+
+# Import TwentyOne support
+try:
+    from .twentyone import TwentyOneName, TwentyOneEntry, TWENTYONE_NAME_MAX
+    from .fat_editor import TwentyOneWriter
+    HAS_TWENTYONE_SUPPORT = True
+except ImportError:
+    HAS_TWENTYONE_SUPPORT = False
+    TwentyOneName = None
+    TwentyOneEntry = None
+    TWENTYONE_NAME_MAX = 21
+    TwentyOneWriter = None
 
 
 @dataclass
@@ -1213,6 +1225,105 @@ class FatImageBackend:
         # 変更をディスクに保存
         if hasattr(fs, 'flush'):
             fs.flush()
+
+    def validate_twentyone_filename(self, filename: str) -> Tuple[bool, str]:
+        """TwentyOne ファイル名を検証
+        
+        Args:
+            filename: 検証するファイル名
+            
+        Returns:
+            (is_valid, message) - 有効性と説明メッセージ
+        """
+        if not HAS_TWENTYONE_SUPPORT:
+            return (False, "TwentyOne support not available")
+        
+        try:
+            TwentyOneName.validate(filename)
+            return (True, f"Valid TwentyOne filename ({len(filename)} characters)")
+        except ValueError as e:
+            return (False, str(e))
+    
+    def write_file_twentyone(
+        self,
+        parent_path: str,
+        filename: str,
+        data: bytes
+    ) -> None:
+        """TwentyOne 形式でファイルを書き込む
+        
+        最大21文字のファイル名をサポートする X68000 TwentyOne 形式で
+        ファイルを書き込みます。
+        
+        Args:
+            parent_path: 親ディレクトリのパス
+            filename: ファイル名（最大21文字）
+            data: ファイルのバイナリデータ
+            
+        Raises:
+            ImageMountError: マウントされていない、またはエラーが発生した
+        """
+        if not HAS_TWENTYONE_SUPPORT:
+            raise ImageMountError("TwentyOne support not available")
+        
+        fs = self._require_fs()
+        
+        # ファイル名を検証
+        is_valid, message = self.validate_twentyone_filename(filename)
+        if not is_valid:
+            raise ImageMountError(f"Invalid TwentyOne filename: {message}")
+        
+        self._ensure_backup()
+        
+        try:
+            # PyFatBytesIOFS の場合は TwentyOneWriter を使用
+            if isinstance(fs, PyFatBytesIOFS):
+                writer = TwentyOneWriter(fs)
+                parent = _clean_fs_path(parent_path)
+                
+                success = writer.write_file(
+                    parent_path=parent,
+                    filename=filename,
+                    file_data=data
+                )
+                
+                if not success:
+                    raise ImageMountError("Failed to write TwentyOne file")
+            else:
+                # XDFFileSystem の場合は通常の書き込みを使用
+                target_path = f"{parent_path}/{filename}".replace('//', '/')
+                self.write_file_bytes(target_path, data)
+            
+            # 変更をディスクに保存
+            if hasattr(fs, 'flush'):
+                fs.flush()
+        
+        except Exception as e:
+            raise ImageMountError(f"Error writing TwentyOne file: {e}")
+    
+    def get_twentyone_info(self, path: str) -> Optional[dict]:
+        """TwentyOne ファイルの情報を取得
+        
+        Args:
+            path: ファイルパス
+            
+        Returns:
+            {
+                'original_name': str,      # TwentyOne 形式のオリジナル名
+                'sfn_name': str,           # SFN 形式の名前
+                'primary': str,            # 主ファイル名（8文字）
+                'secondary': str,          # セカンダリ（10文字）
+                'extension': str,          # 拡張子（3文字）
+            }
+            または None（TwentyOne ファイルでない場合）
+        """
+        if not HAS_TWENTYONE_SUPPORT:
+            return None
+        
+        # 実装注: ディレクトリエントリをパースして TwentyOne エントリを検出する必要があります
+        # 現在はプレースホルダ
+        
+        return None
 
     def export_path_to_local(self, fs_path: str, local_target: Path) -> None:
         fs = self._require_fs()
