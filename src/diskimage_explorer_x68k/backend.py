@@ -940,8 +940,12 @@ class FatImageBackend:
 
     def _is_dir(self, path: str) -> bool:
         fs = self._require_fs()
-        info = fs.getinfo(path, namespaces=["details"])
-        return info.is_dir
+        try:
+            info = fs.getinfo(path, namespaces=["details"])
+            return info.is_dir
+        except Exception:
+            # File does not exist, treat as not a directory
+            return False
 
     def list_dir(self, dir_path: str = "/") -> list[ImageEntry]:
         fs = self._require_fs()

@@ -12,7 +12,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex
 from PySide6.QtGui import QDrag, QColor
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QListView, QAbstractItemView
+    QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu
 )
 
 
@@ -200,6 +200,33 @@ class ColumnListView(QListView):
             drag = QDrag(self)
             drag.setMimeData(mime)
             drag.exec(Qt.CopyAction)
+    
+    def contextMenuEvent(self, event) -> None:
+        """コンテキストメニュー表示。"""
+        selection_model = self.selectionModel()
+        if not selection_model or not selection_model.hasSelection():
+            return
+        
+        model = self.model()
+        if not model or not self.parent_view:
+            return
+        
+        # メニュー作成
+        menu = QMenu(self)
+        
+        # 削除アクション
+        delete_action = menu.addAction("削除")
+        delete_action.triggered.connect(
+            lambda: self.parent_view.on_delete_selected(self)
+        )
+        
+        # 詳細アクション
+        info_action = menu.addAction("情報")
+        info_action.triggered.connect(
+            lambda: self.parent_view.on_show_info(self)
+        )
+        
+        menu.exec(event.globalPos())
 
 
 class CustomColumnView(QWidget):
@@ -321,3 +348,60 @@ class CustomColumnView(QWidget):
         """すべてのカラムを再読み込み。"""
         for model in self.models.values():
             model._load_items()
+    
+    def on_delete_selected(self, list_view: ColumnListView) -> None:
+        """選択アイテムを削除。"""
+        if not self.backend or not list_view:
+            return
+        
+        selection_model = list_view.selectionModel()
+        if not selection_model or not selection_model.hasSelection():
+            return
+        
+        model = list_view.model()
+        
+        # 削除対象を収集
+        paths_to_delete = []
+        for index in selection_model.selectedIndexes():
+            if index.isValid() and index.row() < len(model.items):
+                item = model.items[index.row()]
+                paths_to_delete.append(item.path)
+        
+        if not paths_to_delete:
+            return
+        
+        # 削除実行
+        try:
+            self.backend.delete_paths(paths_to_delete)
+            # 再読み込み
+            self.navigate_to(self.current_path)
+        except Exception as e:
+            print(f"Delete error: {e}")
+    
+    def on_show_info(self, list_view: ColumnListView) -> None:
+        """選択アイテムの情報を表示。"""
+        if not list_view:
+            return
+        
+        selection_model = list_view.selectionModel()
+        if not selection_model or not selection_model.hasSelection():
+            return
+        
+        model = list_view.model()
+        indices = selection_model.selectedIndexes()
+        
+        if not indices or not indices[0].isValid():
+            return
+        
+        index = indices[0]
+        if index.row() < len(model.items):
+            item = model.items[index.row()]
+            info = f"""
+Item Info:
+Name: {item.name}
+Path: {item.path}
+Type: {"Directory" if item.is_dir else "File"}
+Size: {item.size_str()}
+Modified: {item.date_str()}
+            """.strip()
+            print(info)  # For now, just print to console
