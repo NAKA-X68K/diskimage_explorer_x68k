@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         def on_success(snapshot: Any) -> None:
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
-            self.tree.expandToDepth(1)
+            # Default: all directories collapsed (not expanded)
             self._set_info_label()
             self.statusBar().showMessage("Refreshed")
 
