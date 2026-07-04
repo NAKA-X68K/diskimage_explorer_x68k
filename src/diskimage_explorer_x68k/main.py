@@ -238,6 +238,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.backend = FatImageBackend()
         self._updating_offset_combo = False
+        self._syncing_selection = False
         self._drag_export_dirs: list[Path] = []
         self._busy_thread: TaskThread | None = None
         self._busy_overlay: BusyOverlay | None = None
@@ -550,27 +551,26 @@ class MainWindow(QMainWindow):
 
     def _on_tree_selection_changed(self) -> None:
         """ツリーの選択が変更された。"""
+        if self._syncing_selection:
+            return
         selected = self.tree.selectedItems()
         if not selected:
             return
         
         item = selected[0]
         path = self._get_tree_item_path(item)
-        self.column_view.navigate_to(path)
+        self._syncing_selection = True
+        try:
+            self.column_view.navigate_to(path)
+        finally:
+            self._syncing_selection = False
     
     def _get_tree_item_path(self, item: QTreeWidgetItem) -> str:
-        """ツリーアイテムのフルパスを取得。"""
-        parts = []
-        current = item
-        
-        while current.parent() is not None:
-            parts.insert(0, current.text(0))
-            current = current.parent()
-        
-        if not parts:
-            return "/"
-        
-        return "/" + "/".join(parts)
+        """ツリーアイテムのフルパスを取得（UserRole から直接取得）。"""
+        path = item.data(0, Qt.UserRole)
+        if path:
+            return str(path)
+        return "/"
 
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         del column
@@ -986,13 +986,18 @@ class MainWindow(QMainWindow):
     
     def _on_column_view_path_changed(self, path: str) -> None:
         """カラムビューでパスが変更された。"""
-        # ツリーで対応するアイテムを選択
-        self._select_tree_item_by_path(path)
+        if self._syncing_selection:
+            return
+        self._syncing_selection = True
+        try:
+            self._select_tree_item_by_path(path)
+        finally:
+            self._syncing_selection = False
     
     def _select_tree_item_by_path(self, path: str) -> None:
         """指定パスに対応するツリーアイテムを選択。"""
         if path == "/":
-            self.tree.setCurrentItem(self.tree.invisibleRootItem())
+            # ルートの場合は何も変更しない（選択を維持）
             self._set_info_label()
             return
         
