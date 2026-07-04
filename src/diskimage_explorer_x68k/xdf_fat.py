@@ -521,9 +521,9 @@ class DirectoryReader:
         Returns:
             32 バイトのエントリデータ
         """
-        # ファイル名と拡張子を 8+3 バイトにパディング（Human68k は小文字をそのまま格納可能）
-        filename_bytes = entry.filename.encode('ascii')[:8].ljust(8)
-        ext_bytes = entry.extension.encode('ascii')[:3].ljust(3)
+        # ファイル名と拡張子を 8+3 バイトにパディング（FAT 仕様: スペース 0x20 でパディング）
+        filename_bytes = entry.filename.encode('ascii')[:8].ljust(8, b' ')
+        ext_bytes = entry.extension.encode('ascii')[:3].ljust(3, b' ')
         
         # タイムスタンプ（リトルエンディアン）
         created_time = struct.pack('<H', entry.created_time)
