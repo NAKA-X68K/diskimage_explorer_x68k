@@ -928,21 +928,17 @@ class MainWindow(QMainWindow):
         """Create a new file in the specified directory."""
         if self.backend.fs is None:
             return
-        
-        # Simple file creation dialog
-        filename, ok = QInputDialog.getText(
-            self, 
-            "Create File", 
-            "File name (8.3 format):",
-            text="newfile.txt"
+
+        filename = self._prompt_sfn_filename(
+            title="Create File",
+            default_text="newfile.txt",
         )
-        
-        if not ok or not filename:
+        if filename is None:
             return
-        
+
         # Create empty file
         try:
-            self.backend.write_file_bytes(f"{parent_path}/{filename}", b"")
+            self.backend.create_empty_file(_join(parent_path, filename))
             self.refresh_tree()
             self._set_info_label()
             QMessageBox.information(self, "Create File", f"File created: {filename}")
@@ -1004,6 +1000,96 @@ class MainWindow(QMainWindow):
             return "/"
         is_dir = bool(self._selected_items()[0].data(0, Qt.UserRole + 1))
         return path if is_dir else _parent(path)
+
+    @staticmethod
+    def _validate_sfn_filename(name: str) -> str | None:
+        """Validate strict FAT 8.3 filename. Returns error text when invalid."""
+        n = name.strip()
+        if not n:
+            return "ファイル名を入力してください。"
+
+        if "/" in n or "\\" in n:
+            return "'/' と '\\' は使用できません。"
+
+        if n in (".", ".."):
+            return "'.' と '..' は使用できません。"
+
+        parts = n.split(".")
+        if len(parts) > 2:
+            return "New File は 8.3 形式のみ対応です（ピリオドは1つまで）。"
+
+        base = parts[0]
+        ext = parts[1] if len(parts) == 2 else ""
+
+        if len(base) == 0:
+            return "ファイル名本体（拡張子の前）は1文字以上必要です。"
+
+        if len(base) > 8 or len(ext) > 3:
+            return "New File は 8.3 形式のみ対応です。21文字名は右クリックの Create TwentyOne File を使用してください。"
+
+        forbidden = set(' \":;,[]<>|?*')
+        for ch in n:
+            if ord(ch) < 0x20 or ch in forbidden:
+                return "使用できない文字が含まれています。"
+
+        return None
+
+    def _prompt_sfn_filename(self, title: str, default_text: str = "") -> str | None:
+        """Prompt filename with strict 8.3 validation and keep dialog open while invalid."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(560)
+
+        layout = QVBoxLayout(dlg)
+        notice = QLabel(
+            "New File は FAT の 8.3 形式専用です。\n"
+            "21文字ファイル名（TwentyOne）は右クリックの Create TwentyOne File を使用してください。"
+        )
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("File name:"))
+        edit = QLineEdit(dlg)
+        edit.setText(default_text)
+        row.addWidget(edit)
+        layout.addLayout(row)
+
+        hint = QLabel("")
+        hint.setStyleSheet("color: #b00020;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        buttons.rejected.connect(dlg.reject)
+
+        def refresh_state() -> None:
+            err = self._validate_sfn_filename(edit.text())
+            if err:
+                hint.setText(err)
+                ok_btn.setEnabled(False)
+            else:
+                hint.setText("")
+                ok_btn.setEnabled(True)
+
+        def accept_if_valid() -> None:
+            err = self._validate_sfn_filename(edit.text())
+            if err:
+                hint.setText(err)
+                return
+            dlg.accept()
+
+        edit.textChanged.connect(lambda _value: refresh_state())
+        buttons.accepted.connect(accept_if_valid)
+        layout.addWidget(buttons)
+
+        refresh_state()
+        edit.setFocus()
+        edit.selectAll()
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        return edit.text().strip()
 
     def _fill_offset_combo(self) -> None:
         self._updating_offset_combo = True
@@ -1289,16 +1375,14 @@ class MainWindow(QMainWindow):
         else:
             target_dir = self._selected_target_dir()
 
-        name, ok = QInputDialog.getText(self, "New File", "File name:")
-        if not ok or not name.strip():
+        name = self._prompt_sfn_filename(title="New File")
+        if name is None:
             return
 
         try:
-            sfn_name = _to_fat_sfn(name.strip())
-            self.backend.create_empty_file(_join(target_dir, sfn_name))
+            self.backend.create_empty_file(_join(target_dir, name))
             self.refresh_tree()
-            msg = f"File created as: {sfn_name}" if sfn_name != name.strip() else "File created"
-            self.statusBar().showMessage(msg)
+            self.statusBar().showMessage("File created")
         except Exception as exc:
             QMessageBox.critical(self, "Create file failed", str(exc))
 
