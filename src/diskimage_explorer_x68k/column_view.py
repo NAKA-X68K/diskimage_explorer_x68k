@@ -9,8 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
-from PySide6.QtGui import QDrag, QColor
+from PySide6.QtCore import Qt, QSize, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
+from PySide6.QtGui import QDrag, QColor, QFont
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu, QApplication, QStyle,
     QVBoxLayout, QLabel, QPushButton
@@ -59,6 +59,7 @@ class ColumnViewModel(QAbstractListModel):
         self.items: list[DiskFileInfo] = []
         app = QApplication.instance()
         self._dir_icon = app.style().standardIcon(QStyle.SP_DirIcon) if app else None
+        self._item_font = QFont(app.font()) if app else QFont()
         self._load_items()
     
     def _load_items(self) -> None:
@@ -113,6 +114,10 @@ class ColumnViewModel(QAbstractListModel):
         elif role == Qt.DecorationRole:
             if item.is_dir:
                 return self._dir_icon
+
+        elif role == Qt.FontRole:
+            # ディレクトリ/ファイルで同じフォントサイズを使う
+            return self._item_font
         
         elif role == Qt.ForegroundRole:
             # フォルダは青色
@@ -141,8 +146,10 @@ class ColumnListView(QListView):
         super().__init__(parent)
         self.backend = None
         self.parent_view = None
+        self.setIconSize(QSize(16, 16))
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setAlternatingRowColors(True)
+        self.setUniformItemSizes(True)
         self.setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)

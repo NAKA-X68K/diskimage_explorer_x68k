@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from typing import Any, Callable
 
-from PySide6.QtCore import QMimeData, QSettings, QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, QMimeData, QSettings, QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDrag, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
         self.tree.setSelectionBehavior(QTreeWidget.SelectRows)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.setUniformRowHeights(True)
+        self.tree.setIconSize(QSize(16, 16))
         
         # カラムビュー設定
         self.column_view = CustomColumnView(None)
