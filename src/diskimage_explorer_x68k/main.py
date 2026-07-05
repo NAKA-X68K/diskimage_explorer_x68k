@@ -57,6 +57,16 @@ def _parent(path: str) -> str:
     return pp if pp.startswith("/") else "/"
 
 
+def _display_path_for_dialog(fs_path: str, display_name: str) -> str:
+    """ダイアログ表示用パスを返す。
+
+    実アクセスには fs_path を使い、表示時だけ末尾名を UI 表示名で置き換える。
+    """
+    if not display_name:
+        return fs_path
+    return _join(_parent(fs_path), display_name)
+
+
 class DropTreeWidget(QTreeWidget):
     localPathsDropped = Signal(list, str, bool)
 
@@ -720,7 +730,7 @@ class MainWindow(QMainWindow):
         dlg.resize(900, 620)
 
         layout = QVBoxLayout(dlg)
-        info = QLabel(f"Path: {fs_path}")
+        info = QLabel(f"Path: {_display_path_for_dialog(fs_path, name)}")
 
         enc_row = QHBoxLayout()
         enc_row.addWidget(QLabel("Encoding:"))
@@ -805,7 +815,7 @@ class MainWindow(QMainWindow):
         dlg.resize(960, 680)
 
         layout = QVBoxLayout(dlg)
-        info = QLabel(f"Path: {fs_path}")
+        info = QLabel(f"Path: {_display_path_for_dialog(fs_path, name)}")
 
         enc_row = QHBoxLayout()
         enc_row.addWidget(QLabel("Encoding:"))
