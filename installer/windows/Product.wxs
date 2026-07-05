@@ -15,11 +15,11 @@
       <Directory Id="INSTALLFOLDER" Name="diskimage_explorer_x68k" />
     </StandardDirectory>
 
-    <StandardDirectory Id="CommonProgramsFolder">
+    <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ProgramMenuDir" Name="diskimage_explorer_x68k" />
     </StandardDirectory>
 
-    <StandardDirectory Id="CommonDesktopFolder" />
+    <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="MainFeature" Title="diskimage_explorer_x68k" Level="1">
       <ComponentGroupRef Id="AppFiles" />
@@ -35,7 +35,7 @@
         WorkingDirectory="INSTALLFOLDER" />
       <Shortcut
         Id="DesktopShortcut"
-        Directory="CommonDesktopFolder"
+        Directory="DesktopFolder"
         Name="diskimage_explorer_x68k"
         Target="[INSTALLFOLDER]diskimage_explorer_x68k.exe"
         WorkingDirectory="INSTALLFOLDER" />
