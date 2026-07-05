@@ -158,32 +158,46 @@ class ColumnListView(QListView):
         self.setDefaultDropAction(Qt.CopyAction)
         self.setMinimumWidth(200)
         self._set_inactive_style()
+
+    def _base_style(self, border_width: int, border_color: QColor) -> str:
+        pal = self.palette()
+        base = pal.color(QPalette.Base)
+        alt = pal.color(QPalette.AlternateBase)
+        text = pal.color(QPalette.Text)
+        highlight = pal.color(QPalette.Highlight)
+        highlighted_text = pal.color(QPalette.HighlightedText)
+        hover = blend_colors(base, highlight, 0.12)
+        return (
+            "QListView {"
+            f"border: {border_width}px solid {color_to_css(border_color)};"
+            f"background-color: {color_to_css(base)};"
+            f"color: {color_to_css(text)};"
+            f"alternate-background-color: {color_to_css(alt)};"
+            "outline: none;"
+            "}"
+            "QListView::item {"
+            "padding: 2px;"
+            "}"
+            "QListView::item:hover {"
+            f"background-color: {color_to_css(hover)};"
+            "}"
+            "QListView::item:selected {"
+            f"background-color: {color_to_css(highlight)};"
+            f"color: {color_to_css(highlighted_text)};"
+            "}"
+        )
     
     def _set_active_style(self) -> None:
         """アクティブカラムのスタイル。"""
         pal = self.palette()
         highlight = pal.color(QPalette.Highlight)
-        base = pal.color(QPalette.Base)
-        active_bg = blend_colors(base, highlight, 0.12)
-        self.setStyleSheet(
-            "QListView {"
-            f"border: 2px solid {color_to_css(highlight)};"
-            f"background-color: {color_to_css(active_bg)};"
-            "}"
-        )
+        self.setStyleSheet(self._base_style(2, highlight))
     
     def _set_inactive_style(self) -> None:
         """非アクティブカラムのスタイル。"""
         pal = self.palette()
         border = blend_colors(pal.color(QPalette.Text), pal.color(QPalette.Base), 0.7)
-        self.setStyleSheet(
-            "QListView {"
-            f"border: 1px solid {color_to_css(border)};"
-            f"background-color: {color_to_css(pal.color(QPalette.Base))};"
-            f"color: {color_to_css(pal.color(QPalette.Text))};"
-            f"alternate-background-color: {color_to_css(pal.color(QPalette.AlternateBase))};"
-            "}"
-        )
+        self.setStyleSheet(self._base_style(1, border))
     
     def mousePressEvent(self, event) -> None:
         """空白領域クリック時に深いカラムを閉じる。"""
