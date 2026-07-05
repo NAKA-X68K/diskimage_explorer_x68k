@@ -15,8 +15,32 @@
       <Directory Id="INSTALLFOLDER" Name="diskimage_explorer_x68k" />
     </StandardDirectory>
 
+    <StandardDirectory Id="CommonProgramsFolder">
+      <Directory Id="ProgramMenuDir" Name="diskimage_explorer_x68k" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonDesktopFolder" />
+
     <Feature Id="MainFeature" Title="diskimage_explorer_x68k" Level="1">
       <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="ShortcutComponent" />
     </Feature>
+
+    <Component Id="ShortcutComponent" Directory="INSTALLFOLDER" Guid="*">
+      <Shortcut
+        Id="ProgramMenuShortcut"
+        Directory="ProgramMenuDir"
+        Name="diskimage_explorer_x68k"
+        Target="[INSTALLFOLDER]diskimage_explorer_x68k.exe"
+        WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+        Id="DesktopShortcut"
+        Directory="CommonDesktopFolder"
+        Name="diskimage_explorer_x68k"
+        Target="[INSTALLFOLDER]diskimage_explorer_x68k.exe"
+        WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\diskimage_explorer_x68k" Name="ShortcutsInstalled" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
   </Package>
 </Wix>
