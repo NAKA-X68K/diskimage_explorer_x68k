@@ -538,13 +538,17 @@ class MainWindow(QMainWindow):
     def _show_tree_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
         if item is None:
-            return
-
-        fs_path = item.data(0, Qt.UserRole)
-        is_dir = bool(item.data(0, Qt.UserRole + 1))
-        item_name = item.text(0)
-        
-        self.tree.setCurrentItem(item)
+            # ツリー空白領域を右クリックした場合は Root を対象に扱う
+            if self.backend.fs is None:
+                return
+            fs_path = "/"
+            is_dir = True
+            item_name = "/"
+        else:
+            fs_path = item.data(0, Qt.UserRole)
+            is_dir = bool(item.data(0, Qt.UserRole + 1))
+            item_name = item.text(0)
+            self.tree.setCurrentItem(item)
 
         menu = QMenu(self)
         
