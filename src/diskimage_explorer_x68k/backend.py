@@ -1238,6 +1238,14 @@ class FatImageBackend:
         self._ensure_backup()
         p = PurePosixPath(fs_file_path)
         name = p.name
+
+        # pyfatfs の SFN 生成は日本語名を安全に保持できず、実機表示と乖離するため禁止。
+        if not name.isascii():
+            raise ImageMountError(
+                "Non-ASCII filenames are not supported for New File/Create File yet. "
+                "Please use ASCII 8.3 names."
+            )
+
         sfn_name = _to_fat_sfn(name)
         sfn_path = _join_fs_path(str(p.parent), sfn_name)
         clean_path = _clean_fs_path(sfn_path)

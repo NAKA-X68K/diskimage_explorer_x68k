@@ -1012,6 +1012,9 @@ class MainWindow(QMainWindow):
         if not n:
             return "ファイル名を入力してください。"
 
+        if not n.isascii():
+            return "New File / Create File は現在 ASCII 8.3 のみ対応です。日本語名の新規作成は未対応です。"
+
         if "/" in n or "\\" in n:
             return "'/' と '\\' は使用できません。"
 
