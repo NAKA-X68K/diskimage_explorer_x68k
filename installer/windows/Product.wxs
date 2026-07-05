@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="diskimage_explorer_x68k"
+    Manufacturer="diskimage_explorer_x68k"
+    Version="$(var.AppVersion)"
+    UpgradeCode="{A4C7F4E3-63E2-4A8D-AC49-3A5078F3B8D1}"
+    Language="1041"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of diskimage_explorer_x68k is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="diskimage_explorer_x68k" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="diskimage_explorer_x68k" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+  </Package>
+</Wix>
