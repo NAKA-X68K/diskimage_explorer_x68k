@@ -188,7 +188,21 @@ class ColumnListView(QListView):
         if self.parent_view and hasattr(self.parent_view, 'on_drop_files'):
             local_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
             if local_paths:
-                self.parent_view.on_drop_files(local_paths)
+                target_path = self.model().path if self.model() else "/"
+                target_is_dir = True
+
+                idx = self.indexAt(event.position().toPoint())
+                if idx.isValid() and self.model():
+                    data = self.model().data(idx, Qt.UserRole)
+                    if isinstance(data, dict) and data.get('path'):
+                        target_path = data['path']
+                        target_is_dir = bool(data.get('is_dir', False))
+
+                self.parent_view.on_drop_files(local_paths, target_path, target_is_dir)
+                event.acceptProposedAction()
+                return
+
+        event.ignore()
     
     def startDrag(self, supported_actions) -> None:
         """ドラッグ開始。"""
@@ -264,7 +278,7 @@ class CustomColumnView(QWidget):
     """複数 QListView を水平配置したカラムビュー。"""
     
     pathChanged = Signal(str)
-    filesDropped = Signal(str, list)  # path, local_file_paths
+    filesDropped = Signal(list, str, bool)  # local_file_paths, target_path, target_is_dir
     fileViewRequested = Signal(str, str)  # fs_path, name
     fileEditRequested = Signal(str, str)  # fs_path, name
     
@@ -404,9 +418,11 @@ class CustomColumnView(QWidget):
         
         self.pathChanged.emit(path)
     
-    def on_drop_files(self, local_paths: list[str]) -> None:
+    def on_drop_files(self, local_paths: list[str], target_path: Optional[str] = None, target_is_dir: bool = True) -> None:
         """ファイルがドロップされた。"""
-        self.filesDropped.emit(self.current_path, local_paths)
+        if not target_path:
+            target_path = self.current_path
+        self.filesDropped.emit(local_paths, target_path, target_is_dir)
     
     def refresh(self) -> None:
         """すべてのカラムを再読み込み。"""
