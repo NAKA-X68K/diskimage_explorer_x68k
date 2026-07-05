@@ -1107,6 +1107,7 @@ class FatImageBackend:
         dpath = _clean_fs_path(dir_path)
         names = fs.listdir(dpath)
         out: list[ImageEntry] = []
+        cp932_display_map = self._get_cp932_display_map(dpath)
         
         # Track seen names (case-insensitive) to filter out LFN/SFN duplicates
         # PyFatFS may return both LFN and SFN for the same file
@@ -1151,7 +1152,7 @@ class FatImageBackend:
             elif child.upper() in self._twentyone_name_cache:
                 display_name = self._twentyone_name_cache[child.upper()]
             else:
-                cp932_name = self._get_cp932_display_name(child)
+                cp932_name = cp932_display_map.get(name)
                 if cp932_name:
                     display_name = cp932_name
 
@@ -1554,41 +1555,34 @@ class FatImageBackend:
         ext = entry[8:11].decode(encoding, errors="ignore").rstrip()
         return f"{name}.{ext}" if ext else name
 
-    def _get_cp932_display_name(self, path: str) -> Optional[str]:
-        """Try recovering Japanese display name by decoding SFN bytes as cp932."""
+    def _get_cp932_display_map(self, dir_path: str) -> dict[str, str]:
+        """Recover display names by decoding raw SFN bytes as cp932 per directory."""
+        mapping: dict[str, str] = {}
         try:
             fs = self._require_fs()
             if not isinstance(fs, PyFatBytesIOFS):
-                return None
+                return mapping
 
-            parent_path = _clean_fs_path(str(PurePosixPath(path).parent))
-            sfn_name = _clean_fs_path(str(PurePosixPath(path).name))
-            target_upper = sfn_name.upper()
-
-            entries = self._read_directory_raw_entries(parent_path)
+            entries = self._read_directory_raw_entries(dir_path)
             if not entries:
-                return None
+                return mapping
 
             for entry in entries:
                 if entry[0] in (0x00, 0xE5) or entry[11] == 0x0F:
                     continue
 
                 sfn_ibm = self._decode_sfn_from_entry(entry, "ibm437")
-                if sfn_ibm.upper() != target_upper:
-                    continue
-
                 sfn_cp932 = self._decode_sfn_from_entry(entry, "cp932")
                 if not sfn_cp932:
-                    return None
+                    continue
 
                 # Meaningful fallback only when cp932 decoding differs and has non-ASCII.
                 if sfn_cp932 != sfn_ibm and any(ord(c) > 0x7F for c in sfn_cp932):
-                    return sfn_cp932
-                return None
+                    mapping[sfn_ibm] = sfn_cp932
         except Exception:
-            return None
+            return mapping
 
-        return None
+        return mapping
 
     def export_path_to_local(self, fs_path: str, local_target: Path) -> None:
         fs = self._require_fs()
