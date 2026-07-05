@@ -1165,6 +1165,9 @@ class FatImageBackend:
                     modified=mod_text,
                 )
             )
+
+        # 表示順を統一: ディレクトリ -> ファイル、各グループ内は名前順
+        out.sort(key=lambda e: (not e.is_dir, e.name.casefold(), e.path.casefold()))
         return out
 
     def import_local_path(self, local_path: Path, dest_dir: str) -> None:
