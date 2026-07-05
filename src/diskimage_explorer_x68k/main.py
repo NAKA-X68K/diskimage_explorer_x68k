@@ -1365,6 +1365,8 @@ class MainWindow(QMainWindow):
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
             self.column_view.refresh()
+            dest_dir = target_path if target_is_dir else _parent(target_path)
+            self.column_view.select_path(dest_dir)
             self._set_info_label()
             self.statusBar().showMessage("Import complete")
 

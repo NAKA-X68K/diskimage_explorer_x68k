@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex
+from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import QDrag, QColor
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu
@@ -428,6 +428,50 @@ class CustomColumnView(QWidget):
         """すべてのカラムを再読み込み。"""
         for model in self.models.values():
             model._load_items()
+
+    def select_path(self, path: str) -> bool:
+        """指定パスのアイテムを選択してハイライトする。"""
+        if not self.backend:
+            return False
+
+        if not path or path == "/":
+            for view in self.views:
+                view.clearSelection()
+            if self.views:
+                self._set_active_view(self.views[0])
+            self.current_path = "/"
+            return True
+
+        # 親ディレクトリまで展開し、その列で対象パスを選択する
+        parent = path.rsplit("/", 1)[0]
+        parent_path = parent if parent else "/"
+        self.navigate_to(parent_path)
+
+        for depth, model in self.models.items():
+            if model.path != parent_path:
+                continue
+
+            if depth >= len(self.views):
+                return False
+
+            view = self.views[depth]
+            for row, item in enumerate(model.items):
+                if item.path == path:
+                    index = model.index(row, 0)
+                    if index.isValid():
+                        for v in self.views:
+                            v.clearSelection()
+                        view.selectionModel().setCurrentIndex(
+                            index,
+                            QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+                        )
+                        view.scrollTo(index)
+                        self.current_path = path
+                        self._set_active_view(view)
+                        return True
+            return False
+
+        return False
     
     def on_delete_selected(self, list_view: ColumnListView) -> None:
         """選択アイテムを削除。"""
