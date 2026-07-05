@@ -1407,6 +1407,21 @@ class FatImageBackend:
                 sfn_name = parsed.sfn_name
                 sfn_path = _join_fs_path(parent, sfn_name)
                 self._twentyone_name_cache[sfn_path.upper()] = filename
+            elif HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+                parent = _clean_fs_path(parent_path)
+                parsed = TwentyOneName.parse(filename)
+                sfn_name = parsed.sfn_name
+                target_path = _join_fs_path(parent, sfn_name)
+
+                # 1) SFN で作成
+                fs.write_file(target_path, data)
+
+                # 2) XEiJ 互換 inline TwentyOne 拡張を埋め込む
+                patched = self._patch_xdf_twentyone_secondary(parent, sfn_name, parsed.secondary)
+                if not patched:
+                    raise ImageMountError("Failed to patch XEiJ-compatible TwentyOne metadata")
+
+                self._twentyone_name_cache[target_path.upper()] = filename
             else:
                 # XDFFileSystem の場合は通常の書き込みを使用
                 target_path = f"{parent_path}/{filename}".replace('//', '/')
@@ -1440,11 +1455,9 @@ class FatImageBackend:
 
         try:
             fs = self._require_fs()
-            if not isinstance(fs, PyFatBytesIOFS):
-                return None
 
             parent_path = _clean_fs_path(str(PurePosixPath(path).parent))
-            sfn_name = _clean_fs_path(str(PurePosixPath(path).name))
+            sfn_name = str(PurePosixPath(path).name)
 
             raw_entries = self._read_directory_raw_entries(parent_path)
             if not raw_entries:
@@ -1463,33 +1476,53 @@ class FatImageBackend:
     def _read_directory_raw_entries(self, dir_path: str) -> Optional[list[bytes]]:
         """指定ディレクトリの生 FAT エントリ（32 bytes 単位）を読み込む。"""
         fs = self._require_fs()
-        if not isinstance(fs, PyFatBytesIOFS):
-            return None
-
-        pyfat = getattr(fs, "fs", None)
-        if not isinstance(pyfat, PyFat):
-            return None
-
-        fp = getattr(pyfat, "_PyFat__fp", None)
-        if fp is None:
-            return None
-
-        bytes_per_sector = int(pyfat.bpb_header["BPB_BytsPerSec"])
         raw = bytearray()
 
-        if dir_path in ("", "/"):
-            address = pyfat.root_dir_sector * bytes_per_sector
-            length = pyfat.root_dir_sectors * bytes_per_sector
-            fp.seek(address)
-            raw.extend(fp.read(length))
-        else:
-            rel_path = dir_path.strip("/")
-            dir_entry = pyfat.root_dir.get_entry(rel_path)
-            start_cluster = dir_entry.get_cluster()
-            for cluster in pyfat.get_cluster_chain(start_cluster):
-                address = pyfat.get_data_cluster_address(cluster)
+        if isinstance(fs, PyFatBytesIOFS):
+            pyfat = getattr(fs, "fs", None)
+            if not isinstance(pyfat, PyFat):
+                return None
+
+            fp = getattr(pyfat, "_PyFat__fp", None)
+            if fp is None:
+                return None
+
+            bytes_per_sector = int(pyfat.bpb_header["BPB_BytsPerSec"])
+
+            if dir_path in ("", "/"):
+                address = pyfat.root_dir_sector * bytes_per_sector
+                length = pyfat.root_dir_sectors * bytes_per_sector
                 fp.seek(address)
-                raw.extend(fp.read(pyfat.bytes_per_cluster))
+                raw.extend(fp.read(length))
+            else:
+                rel_path = dir_path.strip("/")
+                dir_entry = pyfat.root_dir.get_entry(rel_path)
+                start_cluster = dir_entry.get_cluster()
+                for cluster in pyfat.get_cluster_chain(start_cluster):
+                    address = pyfat.get_data_cluster_address(cluster)
+                    fp.seek(address)
+                    raw.extend(fp.read(pyfat.bytes_per_cluster))
+        elif HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            fat = fs.fat_table
+            bpb = fat.bpb
+
+            if dir_path in ("", "/"):
+                root_size = bpb.root_entries * 32
+                root_data = fat.disk_data[fat.root_start_byte:fat.root_start_byte + root_size]
+                raw.extend(root_data)
+            else:
+                result = fs._find_entry(dir_path)
+                if result is None:
+                    return None
+                entry, _parent_cluster = result
+                if entry is None or not entry.is_directory:
+                    return None
+
+                chain = fat.follow_cluster_chain(entry.start_cluster)
+                for cluster in chain:
+                    raw.extend(fat.read_cluster_data(cluster))
+        else:
+            return None
 
         entries: list[bytes] = []
         for off in range(0, len(raw), 32):
@@ -1502,9 +1535,100 @@ class FatImageBackend:
 
         return entries
 
+    def _patch_xdf_twentyone_secondary(self, parent_path: str, sfn_name: str, secondary: str) -> bool:
+        """XDFFileSystem 用: SFN エントリの 12..21 に secondary(10) を埋め込む。"""
+        fs = self._require_fs()
+        if not (HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem)):
+            return False
+
+        fat = fs.fat_table
+        bpb = fat.bpb
+        data = fat.disk_data
+        target_upper = sfn_name.upper()
+        sec_bytes = secondary.encode("ascii", errors="ignore")[:10].ljust(10, b" ")
+
+        def _match_and_patch(abs_off: int) -> bool:
+            entry = data[abs_off:abs_off + 32]
+            if len(entry) < 32:
+                return False
+            if entry[0] in (0x00, 0xE5) or entry[11] == 0x0F:
+                return False
+
+            name = bytes(entry[0:8]).decode("ascii", errors="ignore").rstrip()
+            ext = bytes(entry[8:11]).decode("ascii", errors="ignore").rstrip()
+            cur = f"{name}.{ext}" if ext else name
+            if cur.upper() != target_upper:
+                return False
+
+            data[abs_off + 12:abs_off + 22] = sec_bytes
+            data[abs_off + 11] = 0x20
+            return True
+
+        if parent_path in ("", "/"):
+            root_size = bpb.root_entries * 32
+            root_start = fat.root_start_byte
+            for rel_off in range(0, root_size, 32):
+                abs_off = root_start + rel_off
+                if data[abs_off] == 0x00:
+                    break
+                if _match_and_patch(abs_off):
+                    return True
+            return False
+
+        result = fs._find_entry(parent_path)
+        if result is None:
+            return False
+        dir_entry, _parent_cluster = result
+        if dir_entry is None or not dir_entry.is_directory:
+            return False
+
+        cluster_size = bpb.bytes_per_sector * bpb.sectors_per_cluster
+        chain = fat.follow_cluster_chain(dir_entry.start_cluster)
+        for cluster in chain:
+            base = fat.get_cluster_byte_offset(cluster)
+            for rel_off in range(0, cluster_size, 32):
+                abs_off = base + rel_off
+                if data[abs_off] == 0x00:
+                    break
+                if _match_and_patch(abs_off):
+                    return True
+        return False
+
     def _extract_twentyone_info_from_entries(self, entries: list[bytes], sfn_name: str) -> Optional[dict]:
         """生エントリ列から指定 SFN に紐づく TwentyOne 情報を復元する。"""
         target_upper = sfn_name.upper()
+
+        # XEiJ 互換 inline 形式:
+        # SFN の 12..21 バイトに secondary(10) を格納。
+        allowed = set(b" ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+        for sfn in entries:
+            if sfn[0] in (0x00, 0xE5) or sfn[11] == 0x0F:
+                continue
+
+            primary = self._decode_twentyone_field(sfn[0:8])
+            extension = self._decode_twentyone_field(sfn[8:11])
+            current_sfn = f"{primary}.{extension}" if extension else primary
+            if current_sfn.upper() != target_upper:
+                continue
+
+            secondary_raw = bytes(sfn[12:22])
+            if not secondary_raw:
+                continue
+            if any(b not in allowed for b in secondary_raw):
+                continue
+
+            secondary = secondary_raw.decode("ascii", errors="ignore").rstrip()
+            if not secondary:
+                continue
+
+            original_name = f"{primary}{secondary}.{extension}" if extension else f"{primary}{secondary}"
+            return {
+                "original_name": original_name,
+                "sfn_name": current_sfn,
+                "primary": primary,
+                "secondary": secondary,
+                "extension": extension,
+            }
 
         for idx, sfn in enumerate(entries):
             if sfn[0] in (0x00, 0xE5):
@@ -1568,8 +1692,6 @@ class FatImageBackend:
         mapping: dict[str, str] = {}
         try:
             fs = self._require_fs()
-            if not isinstance(fs, PyFatBytesIOFS):
-                return mapping
 
             entries = self._read_directory_raw_entries(dir_path)
             if not entries:

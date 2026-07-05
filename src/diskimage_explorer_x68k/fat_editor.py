@@ -250,13 +250,50 @@ class TwentyOneWriter:
             # TwentyOne 名を検証・解析
             TwentyOneName.validate(filename)
 
-            # pyfatfs との互換性を維持するため、ディレクトリエントリ直接改変は行わず
-            # 安全な SFN 作成経路でファイルを作成する。
             twentyone_name = TwentyOneName.parse(filename)
             sfn_name = twentyone_name.sfn_name
             sfn_path = f"{parent_path.rstrip('/')}/{sfn_name}" if parent_path != '/' else f"/{sfn_name}"
+
+            # まず SFN 名でファイルを作成
             with self.fat_fs.openbin(sfn_path, 'w') as f:
                 f.write(file_data)
+
+            # XEiJ 互換 TwentyOne 形式:
+            # SFN エントリの 12..21 バイトに secondary(10) を埋め込む。
+            parent_cluster = self._get_dir_cluster(parent_path)
+            if parent_cluster is None:
+                return True
+
+            cluster_data = self.editor.read_directory_cluster(parent_cluster)
+            if cluster_data is None:
+                return True
+
+            sfn_upper = sfn_name.upper()
+            mutable = bytearray(cluster_data)
+            total_entries = len(mutable) // FAT_ENTRY_SIZE
+
+            for idx in range(total_entries):
+                off = idx * FAT_ENTRY_SIZE
+                entry = mutable[off:off + FAT_ENTRY_SIZE]
+                if len(entry) < FAT_ENTRY_SIZE:
+                    continue
+                if entry[0] in (0x00, FAT_DIRENT_FREE):
+                    continue
+                if entry[11] == 0x0F:
+                    continue
+
+                name = bytes(entry[0:8]).decode('ascii', errors='ignore').rstrip()
+                ext = bytes(entry[8:11]).decode('ascii', errors='ignore').rstrip()
+                cur = f"{name}.{ext}" if ext else name
+                if cur.upper() != sfn_upper:
+                    continue
+
+                secondary = twentyone_name.secondary.encode('ascii', errors='ignore')[:10].ljust(10, b' ')
+                mutable[off + 12:off + 22] = secondary
+                # XEiJ 側と揃えるため archive 属性を明示
+                mutable[off + 11] = 0x20
+                self.editor.write_directory_cluster(parent_cluster, bytes(mutable))
+                break
             
             return True
         
