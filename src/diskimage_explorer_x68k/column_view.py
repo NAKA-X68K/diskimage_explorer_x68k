@@ -12,7 +12,8 @@ from typing import Optional
 from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import QDrag, QColor
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu, QApplication, QStyle
+    QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu, QApplication, QStyle,
+    QVBoxLayout, QLabel, QPushButton
 )
 
 
@@ -296,10 +297,30 @@ class CustomColumnView(QWidget):
         self.views: list[ColumnListView] = []  # depth 順のビューリスト
         
         # UI 設定
-        self.layout = QHBoxLayout()
+        self.root_layout = QVBoxLayout()
+        self.root_layout.setContentsMargins(0, 0, 0, 0)
+        self.root_layout.setSpacing(0)
+        self.setLayout(self.root_layout)
+
+        # パンくず（1行）
+        self.breadcrumb_row = QWidget(self)
+        self.breadcrumb_row.setStyleSheet(
+            "QWidget { border-bottom: 1px solid #d0d0d0; background-color: #f7f7f7; }"
+        )
+        self.breadcrumb_row.setMinimumHeight(34)
+        self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_row)
+        self.breadcrumb_layout.setContentsMargins(8, 4, 8, 4)
+        self.breadcrumb_layout.setSpacing(6)
+        self.root_layout.addWidget(self.breadcrumb_row)
+
+        # カラム本体
+        self.columns_widget = QWidget(self)
+        self.layout = QHBoxLayout(self.columns_widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
-        self.setLayout(self.layout)
+        self.root_layout.addWidget(self.columns_widget, 1)
+
+        self._update_breadcrumbs()
         
         if backend:
             self._init_columns()
@@ -311,6 +332,48 @@ class CustomColumnView(QWidget):
         
         # ルートカラムを作成
         self._add_column(0, "/")
+        self._update_breadcrumbs()
+
+    def _clear_breadcrumbs(self) -> None:
+        while self.breadcrumb_layout.count():
+            item = self.breadcrumb_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _update_breadcrumbs(self) -> None:
+        self._clear_breadcrumbs()
+
+        parts = self.current_path.strip("/").split("/") if self.current_path != "/" else []
+        crumbs: list[tuple[str, str]] = [("ROOT", "/")]
+        if parts:
+            cur = ""
+            for part in parts:
+                cur = f"{cur}/{part}" if cur else f"/{part}"
+                crumbs.append((part, cur))
+
+        for idx, (label, target_path) in enumerate(crumbs):
+            is_current = idx == len(crumbs) - 1
+            btn = QPushButton(label, self.breadcrumb_row)
+            btn.setFlat(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            if is_current:
+                btn.setEnabled(False)
+                btn.setStyleSheet("QPushButton { color: #202020; font-weight: 600; border: none; }")
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { color: #005fb8; text-decoration: underline; border: none; }"
+                    "QPushButton:hover { color: #004080; }"
+                )
+                btn.clicked.connect(lambda _checked=False, p=target_path: self.navigate_to(p))
+            self.breadcrumb_layout.addWidget(btn)
+
+            if idx < len(crumbs) - 1:
+                sep = QLabel(">", self.breadcrumb_row)
+                sep.setStyleSheet("QLabel { color: #707070; }")
+                self.breadcrumb_layout.addWidget(sep)
+
+        self.breadcrumb_layout.addStretch(1)
     
     def _add_column(self, depth: int, path: str) -> None:
         """指定深さにカラムを追加。"""
@@ -360,6 +423,8 @@ class CustomColumnView(QWidget):
             while len(self.models) > depth + 1:
                 self.models.pop(max(self.models.keys()))
             self.pathChanged.emit(item_path)
+
+        self._update_breadcrumbs()
         
         # アクティブカラムをハイライト
         if depth < len(self.views):
@@ -377,6 +442,7 @@ class CustomColumnView(QWidget):
         self.views = []
         self.models = {}
         self.current_path = "/"
+        self._update_breadcrumbs()
         
         if backend:
             self._init_columns()
@@ -400,6 +466,11 @@ class CustomColumnView(QWidget):
             view.deleteLater()
         while len(self.models) > depth + 1:
             self.models.pop(max(self.models.keys()))
+        model = self.models.get(depth)
+        if model:
+            self.current_path = model.path
+            self.pathChanged.emit(self.current_path)
+            self._update_breadcrumbs()
         self._set_active_view(list_view)
     
     def navigate_to(self, path: str) -> None:
@@ -421,7 +492,8 @@ class CustomColumnView(QWidget):
             
             if depth not in self.models:
                 self._add_column(depth, current_path)
-        
+
+        self._update_breadcrumbs()
         self.pathChanged.emit(path)
     
     def on_drop_files(self, local_paths: list[str], target_path: Optional[str] = None, target_is_dir: bool = True) -> None:
@@ -446,6 +518,7 @@ class CustomColumnView(QWidget):
             if self.views:
                 self._set_active_view(self.views[0])
             self.current_path = "/"
+            self._update_breadcrumbs()
             return True
 
         # 親ディレクトリまで展開し、その列で対象パスを選択する
@@ -473,6 +546,7 @@ class CustomColumnView(QWidget):
                         )
                         view.scrollTo(index)
                         self.current_path = path
+                        self._update_breadcrumbs()
                         self._set_active_view(view)
                         return True
             return False
