@@ -24,7 +24,9 @@ TWENTYONE_PRIMARY_MAX = 8
 TWENTYONE_SECONDARY_MAX = 10
 TWENTYONE_BASE_MAX = TWENTYONE_PRIMARY_MAX + TWENTYONE_SECONDARY_MAX  # 18
 TWENTYONE_EXT_MAX = 3
-TWENTYONE_NAME_MAX = TWENTYONE_BASE_MAX + TWENTYONE_EXT_MAX  # 21
+# Full filename length includes the dot between base and extension.
+# 18(base) + 1(dot) + 3(ext) = 22
+TWENTYONE_NAME_MAX = TWENTYONE_BASE_MAX + 1 + TWENTYONE_EXT_MAX  # 22
 
 # Magic identifiers for TwentyOne
 MAGIC_TWEN = b'Twen'  # 4 bytes
@@ -70,7 +72,7 @@ class TwentyOneName:
         """ファイル名を解析して TwentyOneName を生成
         
         Args:
-            filename: ファイル名（最大21文字）
+            filename: ファイル名（最大22文字: 18+1+3）
             
         Returns:
             TwentyOneName オブジェクト
@@ -230,7 +232,7 @@ class TwentyOneEntry:
         """ファイル名から TwentyOneEntry を生成
         
         Args:
-            filename: 21文字以下のファイル名
+            filename: 22文字以下のファイル名（18+1+3）
             create_time: 作成時刻（DOS形式、デフォルト: 0）
             create_date: 作成日付（DOS形式、デフォルト: 0）
             start_cluster: ファイルの開始簇

@@ -199,6 +199,47 @@ def _to_fat_sfn(filename: str) -> str:
         return name
 
 
+def _is_fat_83_compatible(filename: str) -> bool:
+    """Return True when filename already fits FAT 8.3 constraints."""
+    if not filename or filename in (".", ".."):
+        return False
+    if filename.count(".") > 1:
+        return False
+
+    if "." in filename:
+        base, ext = filename.rsplit(".", 1)
+    else:
+        base, ext = filename, ""
+
+    return 0 < len(base) <= 8 and len(ext) <= 3
+
+
+def _to_twentyone_import_name(filename: str) -> str:
+    """Build a TwentyOne-style name with 18+3 policy for imports.
+
+    Policy:
+    - If extension exists, keep up to 3 chars.
+    - Keep base up to 18 chars.
+    - If still exceeds TwentyOne implementation max, trim base further.
+    """
+    if "." in filename:
+        base, ext = filename.rsplit(".", 1)
+    else:
+        base, ext = filename, ""
+
+    base = base[:18]
+    ext = ext[:3]
+
+    candidate = f"{base}.{ext}" if ext else base
+    if len(candidate) > TWENTYONE_NAME_MAX:
+        overflow = len(candidate) - TWENTYONE_NAME_MAX
+        if overflow > 0:
+            base = base[:-overflow] if overflow < len(base) else base[:1]
+        candidate = f"{base}.{ext}" if ext else base
+
+    return candidate
+
+
 def _looks_like_fat_boot_sector(buf: bytes) -> bool:
     if len(buf) < 512:
         return False
@@ -1109,8 +1150,23 @@ class FatImageBackend:
                 self.import_local_path(child, dst)
             return
 
+        source_name = local_path.name
+
+        # Drag&Drop import: prefer TwentyOne naming for filenames that exceed 8.3.
+        # 18+3 以内はそのまま、超過時は 18+3 に切り詰める。
+        if HAS_TWENTYONE_SUPPORT and isinstance(fs, PyFatBytesIOFS) and not _is_fat_83_compatible(source_name):
+            twentyone_name = _to_twentyone_import_name(source_name)
+            try:
+                with local_path.open("rb") as src:
+                    data = src.read()
+                self.write_file_twentyone(target_dir, twentyone_name, data)
+                return
+            except Exception:
+                # TwentyOne 経路が失敗した場合は SFN フォールバック
+                pass
+
         # Convert to FAT SFN to avoid LFN entries
-        sfn_name = _to_fat_sfn(local_path.name)
+        sfn_name = _to_fat_sfn(source_name)
         target_file = _join_fs_path(target_dir, sfn_name)
         with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
@@ -1264,12 +1320,12 @@ class FatImageBackend:
     ) -> None:
         """TwentyOne 形式でファイルを書き込む
         
-        最大21文字のファイル名をサポートする X68000 TwentyOne 形式で
+        最大 18+3（ドット込み最大22文字）のファイル名をサポートする X68000 TwentyOne 形式で
         ファイルを書き込みます。
         
         Args:
             parent_path: 親ディレクトリのパス
-            filename: ファイル名（最大21文字）
+            filename: ファイル名（最大22文字）
             data: ファイルのバイナリデータ
             
         Raises:

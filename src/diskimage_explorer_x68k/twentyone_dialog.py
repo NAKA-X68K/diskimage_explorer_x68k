@@ -1,7 +1,7 @@
 """
 TwentyOne File Creation Dialog for GUI Integration
 
-GUI での21文字ファイル名作成をサポートするダイアログ
+GUI での 18+3 ファイル名作成をサポートするダイアログ
 """
 
 from PySide6.QtCore import Qt
@@ -22,7 +22,7 @@ from .twentyone import TwentyOneName, TWENTYONE_NAME_MAX
 
 
 class TwentyOneFileDialog(QDialog):
-    """TwentyOne (21文字) ファイル名で新規ファイルを作成するダイアログ"""
+    """TwentyOne (18+3) ファイル名で新規ファイルを作成するダイアログ"""
     
     def __init__(self, parent=None, default_filename: str = ""):
         super().__init__(parent)
