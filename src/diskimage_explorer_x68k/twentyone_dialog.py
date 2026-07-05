@@ -202,6 +202,11 @@ class TwentyOneFileContentDialog(QDialog):
         info_layout.addWidget(QLabel(f"File: {filename}"))
         info_layout.addStretch()
         layout.addLayout(info_layout)
+
+        # エンコーディング情報（Create TwentyOne は Shift_JIS 固定保存）
+        encoding_label = QLabel("Encoding: Shift_JIS (save)")
+        encoding_label.setStyleSheet("color: #666; font-size: 10pt;")
+        layout.addWidget(encoding_label)
         
         # テキスト編集エリア
         from PySide6.QtWidgets import QPlainTextEdit
@@ -210,10 +215,12 @@ class TwentyOneFileContentDialog(QDialog):
         
         # 初期内容を表示（テキストとして解釈可能な場合）
         try:
-            initial_text = self.content.decode('utf-8', errors='replace')
+            initial_text = self.content.decode('shift_jis')
             self.text_edit.setPlainText(initial_text)
-        except Exception:
-            self.text_edit.setPlainText("")
+        except UnicodeDecodeError:
+            # Shift_JIS で読めない場合は置換付きで表示
+            initial_text = self.content.decode('shift_jis', errors='replace')
+            self.text_edit.setPlainText(initial_text)
         
         layout.addWidget(self.text_edit)
         
@@ -231,7 +238,15 @@ class TwentyOneFileContentDialog(QDialog):
     def _save(self):
         """保存ボタンを押した時の処理"""
         text = self.text_edit.toPlainText()
-        self.content = text.encode('utf-8')
+        try:
+            self.content = text.encode('shift_jis')
+        except UnicodeEncodeError as exc:
+            QMessageBox.critical(
+                self,
+                "Encoding Error",
+                f"Shift_JIS で保存できない文字が含まれています:\n{exc}"
+            )
+            return
         self.accept()
     
     def get_content(self) -> bytes:
