@@ -174,6 +174,20 @@ def _to_fat_sfn(filename: str) -> str:
         "test" -> "test"
         "verylongfilename.txt" -> "verylo~1.txt"
     """
+    def _trim_to_cp932_bytes(text: str, max_bytes: int) -> str:
+        out = ""
+        used = 0
+        for ch in text:
+            try:
+                b = ch.encode("cp932")
+            except UnicodeEncodeError:
+                continue
+            if used + len(b) > max_bytes:
+                break
+            out += ch
+            used += len(b)
+        return out
+
     # Split name and extension (preserve original case)
     if "." in filename:
         parts = filename.rsplit(".", 1)
@@ -182,15 +196,25 @@ def _to_fat_sfn(filename: str) -> str:
     else:
         name = filename
         ext = ""
-    
-    # Ensure name is max 8 chars
-    if len(name) > 8:
-        # Truncate and add ~1 suffix (preserve case of truncated part)
-        name = name[:6] + "~1"
-    
-    # Ensure extension is max 3 chars
-    if len(ext) > 3:
-        ext = ext[:3]
+
+    # Ensure name is max 8 bytes in cp932.
+    # If too long, use ~1 style with prefix limited to 6 bytes.
+    try:
+        name_bytes = len(name.encode("cp932"))
+    except UnicodeEncodeError:
+        name = _trim_to_cp932_bytes(name, 8)
+        name_bytes = len(name.encode("cp932")) if name else 0
+
+    if name_bytes > 8:
+        prefix = _trim_to_cp932_bytes(name, 6)
+        if not prefix:
+            prefix = "A"
+        name = f"{prefix}~1"
+    else:
+        name = _trim_to_cp932_bytes(name, 8)
+
+    # Ensure extension is max 3 bytes in cp932
+    ext = _trim_to_cp932_bytes(ext, 3)
     
     # Combine
     if ext:
@@ -210,8 +234,10 @@ def _is_fat_83_compatible(filename: str) -> bool:
         base, ext = filename.rsplit(".", 1)
     else:
         base, ext = filename, ""
-
-    return 0 < len(base) <= 8 and len(ext) <= 3
+    try:
+        return 0 < len(base.encode("cp932")) <= 8 and len(ext.encode("cp932")) <= 3
+    except UnicodeEncodeError:
+        return False
 
 
 def _to_twentyone_import_name(filename: str) -> str:
@@ -1124,6 +1150,10 @@ class FatImageBackend:
                     display_name = recovered_name
             elif child.upper() in self._twentyone_name_cache:
                 display_name = self._twentyone_name_cache[child.upper()]
+            else:
+                cp932_name = self._get_cp932_display_name(child)
+                if cp932_name:
+                    display_name = cp932_name
 
             out.append(
                 ImageEntry(
@@ -1154,7 +1184,12 @@ class FatImageBackend:
 
         # Drag&Drop import: prefer TwentyOne naming for filenames that exceed 8.3.
         # 18+3 以内はそのまま、超過時は 18+3 に切り詰める。
-        if HAS_TWENTYONE_SUPPORT and isinstance(fs, PyFatBytesIOFS) and not _is_fat_83_compatible(source_name):
+        if (
+            HAS_TWENTYONE_SUPPORT
+            and isinstance(fs, PyFatBytesIOFS)
+            and source_name.isascii()
+            and not _is_fat_83_compatible(source_name)
+        ):
             twentyone_name = _to_twentyone_import_name(source_name)
             try:
                 with local_path.open("rb") as src:
@@ -1509,6 +1544,49 @@ class FatImageBackend:
                 "secondary": secondary,
                 "extension": merged_extension,
             }
+
+        return None
+
+    @staticmethod
+    def _decode_sfn_from_entry(entry: bytes, encoding: str) -> str:
+        """Decode SFN name/ext from one raw FAT entry with specified encoding."""
+        name = entry[0:8].decode(encoding, errors="ignore").rstrip()
+        ext = entry[8:11].decode(encoding, errors="ignore").rstrip()
+        return f"{name}.{ext}" if ext else name
+
+    def _get_cp932_display_name(self, path: str) -> Optional[str]:
+        """Try recovering Japanese display name by decoding SFN bytes as cp932."""
+        try:
+            fs = self._require_fs()
+            if not isinstance(fs, PyFatBytesIOFS):
+                return None
+
+            parent_path = _clean_fs_path(str(PurePosixPath(path).parent))
+            sfn_name = _clean_fs_path(str(PurePosixPath(path).name))
+            target_upper = sfn_name.upper()
+
+            entries = self._read_directory_raw_entries(parent_path)
+            if not entries:
+                return None
+
+            for entry in entries:
+                if entry[0] in (0x00, 0xE5) or entry[11] == 0x0F:
+                    continue
+
+                sfn_ibm = self._decode_sfn_from_entry(entry, "ibm437")
+                if sfn_ibm.upper() != target_upper:
+                    continue
+
+                sfn_cp932 = self._decode_sfn_from_entry(entry, "cp932")
+                if not sfn_cp932:
+                    return None
+
+                # Meaningful fallback only when cp932 decoding differs and has non-ASCII.
+                if sfn_cp932 != sfn_ibm and any(ord(c) > 0x7F for c in sfn_cp932):
+                    return sfn_cp932
+                return None
+        except Exception:
+            return None
 
         return None
 
