@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import errno
 from importlib import import_module
 from pathlib import Path, PurePosixPath
 import shutil
@@ -1129,13 +1130,24 @@ class MainWindow(QMainWindow):
     def _mount_image_path(self, image_path: str) -> None:
         backup_on_open = self.chk_backup_on_open.isChecked()
 
-        def work() -> list[dict[str, Any]]:
+        def work() -> tuple[list[dict[str, Any]], str | None]:
             self.backend.mount(image_path)
+            backup_warning: str | None = None
             if backup_on_open:
-                self.backend.create_backup_now()
-            return self._build_tree_snapshot("/")
+                try:
+                    self.backend.create_backup_now()
+                except OSError as exc:
+                    if getattr(exc, "errno", None) == errno.ENOSPC:
+                        backup_warning = (
+                            "Backup on Open failed due to insufficient free disk space. "
+                            "Image was mounted without creating a backup."
+                        )
+                    else:
+                        raise
+            return self._build_tree_snapshot("/"), backup_warning
 
-        def on_success(snapshot: Any) -> None:
+        def on_success(result: Any) -> None:
+            snapshot, backup_warning = result
             self._push_mount_history(image_path)
             self._fill_offset_combo()
             self._set_info_label()
@@ -1145,6 +1157,8 @@ class MainWindow(QMainWindow):
             self.column_view.set_backend(self.backend)
             self._update_mount_controls()
             self.statusBar().showMessage("Image mounted")
+            if backup_warning:
+                QMessageBox.warning(self, "Backup skipped", backup_warning)
 
         self._run_busy_task("Opening image...", work, on_success, "Open failed")
 
