@@ -62,7 +62,7 @@ class ColumnViewModel(QAbstractListModel):
         app = QApplication.instance()
         self._dir_icon = app.style().standardIcon(QStyle.SP_DirIcon) if app else None
         self._item_font = QFont(app.font()) if app else QFont()
-        self._dir_color = app.palette().color(app.palette().Link) if app else QColor(0, 0, 255)
+        self._dir_color = app.palette().color(QPalette.Link) if app else QColor(0, 0, 255)
         self._load_items()
     
     def _load_items(self) -> None:
