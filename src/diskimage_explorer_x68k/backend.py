@@ -1096,7 +1096,10 @@ class FatImageBackend:
     def _is_dir(self, path: str) -> bool:
         fs = self._require_fs()
         try:
-            info = fs.getinfo(path, namespaces=["details"])
+            if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+                info = fs.getinfo(path)
+            else:
+                info = fs.getinfo(path, namespaces=["details"])
             return info.is_dir
         except Exception:
             # File does not exist, treat as not a directory
@@ -1129,13 +1132,14 @@ class FatImageBackend:
             # XDFFileSystem doesn't support namespaces parameter
             if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
                 info = fs.getinfo(child)
-                details = {}
+                size = int(getattr(info, "size", 0))
+                modified = getattr(info, "modified", None)
             else:
                 info = fs.getinfo(child, namespaces=["details"])
                 details = info.raw.get("details", {})
-            
-            size = int(details.get("size", 0))
-            modified = details.get("modified")
+                size = int(details.get("size", 0))
+                modified = details.get("modified")
+
             if hasattr(modified, "isoformat"):
                 mod_text = modified.isoformat(sep=" ", timespec="seconds")
             elif isinstance(modified, (int, float)):
