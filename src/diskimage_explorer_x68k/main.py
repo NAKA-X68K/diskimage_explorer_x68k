@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QTabWidget,
+    QStyle,
 )
 
 from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn, HAS_TWENTYONE_SUPPORT
@@ -1164,6 +1165,7 @@ class MainWindow(QMainWindow):
         return out
 
     def _apply_tree_snapshot(self, snapshot: list[dict[str, Any]], parent_item) -> None:
+        dir_icon = self.style().standardIcon(QStyle.SP_DirIcon)
         for n in snapshot:
             item = QTreeWidgetItem(
                 [
@@ -1175,6 +1177,8 @@ class MainWindow(QMainWindow):
             )
             item.setData(0, Qt.UserRole, n["path"])
             item.setData(0, Qt.UserRole + 1, bool(n["is_dir"]))
+            if bool(n["is_dir"]):
+                item.setIcon(0, dir_icon)
             parent_item.addChild(item)
             if bool(n["is_dir"]):
                 self._apply_tree_snapshot(n["children"], item)
@@ -1334,6 +1338,7 @@ class MainWindow(QMainWindow):
         self._run_busy_task("Refreshing file tree...", work, on_success, "Refresh failed")
 
     def _populate_dir(self, dir_path: str, parent_item) -> None:
+        dir_icon = self.style().standardIcon(QStyle.SP_DirIcon)
         entries = self.backend.list_dir(dir_path)
         for e in entries:
             item = QTreeWidgetItem(
@@ -1346,6 +1351,8 @@ class MainWindow(QMainWindow):
             )
             item.setData(0, Qt.UserRole, e.path)
             item.setData(0, Qt.UserRole + 1, e.is_dir)
+            if e.is_dir:
+                item.setIcon(0, dir_icon)
             parent_item.addChild(item)
 
             if e.is_dir:

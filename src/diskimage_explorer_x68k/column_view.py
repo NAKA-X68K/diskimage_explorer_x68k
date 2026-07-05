@@ -12,7 +12,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import QDrag, QColor
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu
+    QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu, QApplication, QStyle
 )
 
 
@@ -56,6 +56,8 @@ class ColumnViewModel(QAbstractListModel):
         self.backend = backend
         self.path = path
         self.items: list[DiskFileInfo] = []
+        app = QApplication.instance()
+        self._dir_icon = app.style().standardIcon(QStyle.SP_DirIcon) if app else None
         self._load_items()
     
     def _load_items(self) -> None:
@@ -106,6 +108,10 @@ class ColumnViewModel(QAbstractListModel):
                 'date': item.date_str(),
                 'path': item.path,
             }
+
+        elif role == Qt.DecorationRole:
+            if item.is_dir:
+                return self._dir_icon
         
         elif role == Qt.ForegroundRole:
             # フォルダは青色
