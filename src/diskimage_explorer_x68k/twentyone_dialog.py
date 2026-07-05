@@ -16,9 +16,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QFrame,
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPalette
 
 from .twentyone import TwentyOneName, TWENTYONE_NAME_MAX
+from .theme import blend_colors, color_to_css
 
 
 class TwentyOneFileDialog(QDialog):
@@ -34,6 +35,14 @@ class TwentyOneFileDialog(QDialog):
     
     def _init_ui(self, default_filename: str):
         """UI を初期化"""
+        palette = self.palette()
+        help_text = blend_colors(palette.color(QPalette.WindowText), palette.color(QPalette.Window), 0.35)
+        preview_bg = blend_colors(palette.color(QPalette.Base), palette.color(QPalette.Window), 0.25)
+        preview_border = blend_colors(palette.color(QPalette.Text), palette.color(QPalette.Base), 0.75)
+        info_bg = blend_colors(palette.color(QPalette.Base), palette.color(QPalette.Highlight), 0.18)
+        info_border = blend_colors(palette.color(QPalette.Highlight), palette.color(QPalette.Base), 0.45)
+        error_color = palette.color(QPalette.BrightText)
+
         layout = QVBoxLayout()
         
         # タイトル
@@ -50,7 +59,7 @@ class TwentyOneFileDialog(QDialog):
             "Format: <name (18)>.<extension (3)>\n"
             "Example: verylongfilename.tar or foo.tar.gz"
         )
-        desc.setStyleSheet("color: #666; font-size: 10pt;")
+        desc.setStyleSheet(f"color: {color_to_css(help_text)}; font-size: 10pt;")
         layout.addWidget(desc)
         
         # ファイル名入力フィールド
@@ -73,9 +82,9 @@ class TwentyOneFileDialog(QDialog):
         
         self.preview_text = QLabel("")
         self.preview_text.setStyleSheet(
-            "background-color: #f5f5f5; "
+            f"background-color: {color_to_css(preview_bg)}; "
             "padding: 8px; "
-            "border: 1px solid #ccc; "
+            f"border: 1px solid {color_to_css(preview_border)}; "
             "border-radius: 3px; "
             "font-family: monospace;"
         )
@@ -91,12 +100,12 @@ class TwentyOneFileDialog(QDialog):
         
         self.structure_text = QLabel("")
         self.structure_text.setStyleSheet(
-            "background-color: #e8f4f8; "
+            f"background-color: {color_to_css(info_bg)}; "
             "padding: 8px; "
-            "border: 1px solid #b3d9e6; "
+            f"border: 1px solid {color_to_css(info_border)}; "
             "border-radius: 3px; "
             "font-family: monospace; "
-            "color: #0066cc;"
+            f"color: {color_to_css(palette.color(QPalette.Link))};"
         )
         info_layout.addWidget(self.structure_text)
         
@@ -104,7 +113,7 @@ class TwentyOneFileDialog(QDialog):
         
         # エラー/警告メッセージ
         self.message_label = QLabel("")
-        self.message_label.setStyleSheet("color: #cc0000; font-weight: bold;")
+        self.message_label.setStyleSheet(f"color: {color_to_css(error_color)}; font-weight: bold;")
         layout.addWidget(self.message_label)
         
         # ボタン
@@ -195,6 +204,8 @@ class TwentyOneFileContentDialog(QDialog):
     
     def _init_ui(self, filename: str):
         """UI を初期化"""
+        palette = self.palette()
+        help_text = blend_colors(palette.color(QPalette.WindowText), palette.color(QPalette.Window), 0.35)
         layout = QVBoxLayout()
         
         # ファイル情報
@@ -205,7 +216,7 @@ class TwentyOneFileContentDialog(QDialog):
 
         # エンコーディング情報（Create TwentyOne は Shift_JIS 固定保存）
         encoding_label = QLabel("Encoding: Shift_JIS (save)")
-        encoding_label.setStyleSheet("color: #666; font-size: 10pt;")
+        encoding_label.setStyleSheet(f"color: {color_to_css(help_text)}; font-size: 10pt;")
         layout.addWidget(encoding_label)
         
         # テキスト編集エリア

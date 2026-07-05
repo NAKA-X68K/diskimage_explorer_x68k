@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, QMimeData, QUrl, Signal, QAbstractListModel, QModelIndex, QItemSelectionModel
-from PySide6.QtGui import QDrag, QColor, QFont
+from PySide6.QtGui import QDrag, QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QListView, QAbstractItemView, QMenu, QApplication, QStyle,
     QVBoxLayout, QLabel, QPushButton
 )
+
+from .theme import blend_colors, color_to_css
 
 
 class DiskFileInfo:
@@ -60,6 +62,7 @@ class ColumnViewModel(QAbstractListModel):
         app = QApplication.instance()
         self._dir_icon = app.style().standardIcon(QStyle.SP_DirIcon) if app else None
         self._item_font = QFont(app.font()) if app else QFont()
+        self._dir_color = app.palette().color(app.palette().Link) if app else QColor(0, 0, 255)
         self._load_items()
     
     def _load_items(self) -> None:
@@ -120,9 +123,9 @@ class ColumnViewModel(QAbstractListModel):
             return self._item_font
         
         elif role == Qt.ForegroundRole:
-            # フォルダは青色
+            # フォルダはテーマのリンク色
             if item.is_dir:
-                return QColor(0, 0, 255)
+                return self._dir_color
         
         return None
     
@@ -158,14 +161,28 @@ class ColumnListView(QListView):
     
     def _set_active_style(self) -> None:
         """アクティブカラムのスタイル。"""
+        pal = self.palette()
+        highlight = pal.color(QPalette.Highlight)
+        base = pal.color(QPalette.Base)
+        active_bg = blend_colors(base, highlight, 0.12)
         self.setStyleSheet(
-            "QListView { border: 2px solid #0078d4; background-color: #f5f9ff; }"
+            "QListView {"
+            f"border: 2px solid {color_to_css(highlight)};"
+            f"background-color: {color_to_css(active_bg)};"
+            "}"
         )
     
     def _set_inactive_style(self) -> None:
         """非アクティブカラムのスタイル。"""
+        pal = self.palette()
+        border = blend_colors(pal.color(QPalette.Text), pal.color(QPalette.Base), 0.7)
         self.setStyleSheet(
-            "QListView { border: 1px solid #cccccc; background-color: white; }"
+            "QListView {"
+            f"border: 1px solid {color_to_css(border)};"
+            f"background-color: {color_to_css(pal.color(QPalette.Base))};"
+            f"color: {color_to_css(pal.color(QPalette.Text))};"
+            f"alternate-background-color: {color_to_css(pal.color(QPalette.AlternateBase))};"
+            "}"
         )
     
     def mousePressEvent(self, event) -> None:
@@ -311,9 +328,6 @@ class CustomColumnView(QWidget):
 
         # パンくず（1行）
         self.breadcrumb_row = QWidget(self)
-        self.breadcrumb_row.setStyleSheet(
-            "QWidget { border-bottom: 1px solid #d0d0d0; background-color: #f7f7f7; }"
-        )
         self.breadcrumb_row.setMinimumHeight(34)
         self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_row)
         self.breadcrumb_layout.setContentsMargins(8, 4, 8, 4)
@@ -327,6 +341,7 @@ class CustomColumnView(QWidget):
         self.layout.setSpacing(0)
         self.root_layout.addWidget(self.columns_widget, 1)
 
+        self._apply_theme()
         self._update_breadcrumbs()
         
         if backend:
@@ -340,6 +355,17 @@ class CustomColumnView(QWidget):
         # ルートカラムを作成
         self._add_column(0, "/")
         self._update_breadcrumbs()
+
+    def _apply_theme(self) -> None:
+        pal = self.palette()
+        border = blend_colors(pal.color(QPalette.WindowText), pal.color(QPalette.Window), 0.75)
+        row_bg = blend_colors(pal.color(QPalette.Window), pal.color(QPalette.Base), 0.35)
+        self.breadcrumb_row.setStyleSheet(
+            "QWidget {"
+            f"border-bottom: 1px solid {color_to_css(border)};"
+            f"background-color: {color_to_css(row_bg)};"
+            "}"
+        )
 
     def _clear_breadcrumbs(self) -> None:
         while self.breadcrumb_layout.count():
@@ -366,18 +392,32 @@ class CustomColumnView(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             if is_current:
                 btn.setEnabled(False)
-                btn.setStyleSheet("QPushButton { color: #202020; font-weight: 600; border: none; }")
-            else:
                 btn.setStyleSheet(
-                    "QPushButton { color: #005fb8; text-decoration: underline; border: none; }"
-                    "QPushButton:hover { color: #004080; }"
+                    "QPushButton {"
+                    f"color: {color_to_css(self.palette().color(QPalette.WindowText))};"
+                    "font-weight: 600; border: none; background: transparent; }"
+                )
+            else:
+                link = self.palette().color(QPalette.Link)
+                hover = blend_colors(link, self.palette().color(QPalette.Highlight), 0.25)
+                btn.setStyleSheet(
+                    "QPushButton {"
+                    f"color: {color_to_css(link)};"
+                    "text-decoration: underline; border: none; background: transparent; }"
+                    "QPushButton:hover {"
+                    f"color: {color_to_css(hover)};"
+                    "}"
                 )
                 btn.clicked.connect(lambda _checked=False, p=target_path: self.navigate_to(p))
             self.breadcrumb_layout.addWidget(btn)
 
             if idx < len(crumbs) - 1:
                 sep = QLabel(">", self.breadcrumb_row)
-                sep.setStyleSheet("QLabel { color: #707070; }")
+                sep.setStyleSheet(
+                    "QLabel {"
+                    f"color: {color_to_css(blend_colors(self.palette().color(QPalette.WindowText), self.palette().color(QPalette.Window), 0.45))};"
+                    "}"
+                )
                 self.breadcrumb_layout.addWidget(sep)
 
         self.breadcrumb_layout.addStretch(1)

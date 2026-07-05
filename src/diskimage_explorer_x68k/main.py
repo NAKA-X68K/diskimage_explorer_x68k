@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .backend import FatImageBackend, ImageMountError, _normalize_path_for_x68k, _to_fat_sfn, HAS_TWENTYONE_SUPPORT
 from .column_view import CustomColumnView
+from .theme import apply_app_theme, blend_colors, color_to_css
 
 # TwentyOne support imports (conditional)
 if HAS_TWENTYONE_SUPPORT:
@@ -79,24 +80,35 @@ class DropTreeWidget(QTreeWidget):
         self.setDragEnabled(True)
         self.setDragDropMode(QTreeWidget.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)
-        
-        # ハイライト設定
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAlternatingRowColors(True)
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        pal = self.palette()
+        base = pal.color(QPalette.Base)
+        alt = pal.color(QPalette.AlternateBase)
+        text = pal.color(QPalette.Text)
+        highlight = pal.color(QPalette.Highlight)
+        highlighted_text = pal.color(QPalette.HighlightedText)
+        hover = blend_colors(base, highlight, 0.18)
         self.setStyleSheet(
-            "QTreeWidget { "
-            "background-color: white; "
-            "} "
-            "QTreeWidget::item { "
-            "padding: 2px; "
-            "} "
-            "QTreeWidget::item:selected { "
-            "background-color: #0078d4 !important; "
-            "color: white !important; "
-            "} "
-            "QTreeWidget::item:hover { "
-            "background-color: #e8f0f8; "
+            "QTreeWidget {"
+            f"background-color: {color_to_css(base)};"
+            f"alternate-background-color: {color_to_css(alt)};"
+            f"color: {color_to_css(text)};"
+            "}"
+            "QTreeWidget::item {"
+            "padding: 2px;"
+            "}"
+            "QTreeWidget::item:selected {"
+            f"background-color: {color_to_css(highlight)} !important;"
+            f"color: {color_to_css(highlighted_text)} !important;"
+            "}"
+            "QTreeWidget::item:hover {"
+            f"background-color: {color_to_css(hover)};"
             "}"
         )
-        self.setFocusPolicy(Qt.StrongFocus)
 
     def set_external_url_provider(self, provider: Callable[[], list[QUrl]]) -> None:
         self._external_url_provider = provider
@@ -1528,6 +1540,7 @@ def run() -> int:
     # Apply Fusion style for better selection highlighting
     from PySide6.QtWidgets import QStyleFactory
     app.setStyle(QStyleFactory.create('Fusion'))
+    apply_app_theme(app)
     window = MainWindow()
     window.show()
     return app.exec()
