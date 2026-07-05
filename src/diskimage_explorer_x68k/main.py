@@ -971,10 +971,14 @@ class MainWindow(QMainWindow):
             return
         
         content = content_dlg.get_content()
+        if isinstance(content, str):
+            content_bytes = content.encode('utf-8')
+        else:
+            content_bytes = bytes(content)
         
         # Write file to image
         try:
-            self.backend.write_file_twentyone(parent_path, filename, content.encode('utf-8'))
+            self.backend.write_file_twentyone(parent_path, filename, content_bytes)
             self.refresh_tree()
             self._set_info_label()
             QMessageBox.information(self, "Create TwentyOne File", f"File created: {filename}")
