@@ -1364,6 +1364,7 @@ class MainWindow(QMainWindow):
         def on_success(snapshot: Any) -> None:
             self.tree.clear()
             self._apply_tree_snapshot(snapshot, self.tree.invisibleRootItem())
+            self.column_view.refresh()
             self._set_info_label()
             self.statusBar().showMessage("Import complete")
 
