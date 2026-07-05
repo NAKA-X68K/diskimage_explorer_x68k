@@ -1179,7 +1179,11 @@ class FatImageBackend:
             # Convert to FAT SFN to avoid LFN entries
             sfn_name = _to_fat_sfn(local_path.name)
             dst = _join_fs_path(target_dir, sfn_name)
-            fs.makedir(dst, recreate=True)
+            if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+                fs.makedirs(dst)
+                fs.flush()
+            else:
+                fs.makedir(dst, recreate=True)
             for child in local_path.iterdir():
                 self.import_local_path(child, dst)
             return
@@ -1207,8 +1211,13 @@ class FatImageBackend:
         # Convert to FAT SFN to avoid LFN entries
         sfn_name = _to_fat_sfn(source_name)
         target_file = _join_fs_path(target_dir, sfn_name)
-        with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            data = local_path.read_bytes()
+            fs.write_file(target_file, data)
+            fs.flush()
+        else:
+            with local_path.open("rb") as src, fs.openbin(target_file, "w") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
 
     def replace_file(self, fs_file_path: str, local_file: Path) -> None:
         fs = self._require_fs()
@@ -1217,8 +1226,12 @@ class FatImageBackend:
             raise ImageMountError("Cannot replace a directory with file content")
 
         self._ensure_backup()
-        with local_file.open("rb") as src, fs.openbin(target, "w") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            fs.write_file(target, local_file.read_bytes())
+            fs.flush()
+        else:
+            with local_file.open("rb") as src, fs.openbin(target, "w") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
 
     def create_dir(self, fs_dir_path: str) -> None:
         fs = self._require_fs()
@@ -1728,5 +1741,8 @@ class FatImageBackend:
             return
 
         local_target.parent.mkdir(parents=True, exist_ok=True)
-        with fs.openbin(src, "r") as src_fp, local_target.open("wb") as dst_fp:
-            shutil.copyfileobj(src_fp, dst_fp, length=1024 * 1024)
+        if HAS_XDF_SUPPORT and isinstance(fs, XDFFileSystem):
+            local_target.write_bytes(fs.read_file(src))
+        else:
+            with fs.openbin(src, "r") as src_fp, local_target.open("wb") as dst_fp:
+                shutil.copyfileobj(src_fp, dst_fp, length=1024 * 1024)
